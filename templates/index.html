@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image Watermarking Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .section {
+            flex: 1;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Image Watermarking Service</h1>
+    
+    <div class="container">
+        <div class="section">
+            <h2>Add Watermark</h2>
+            <form id="watermarkForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="cover">Cover Image:</label>
+                    <input type="file" id="cover" name="cover" accept="image/*" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="message">Watermark Message:</label>
+                    <input type="text" id="message" name="message" value="Hello World!">
+                </div>
+                
+                <div class="form-group">
+                    <label>Watermark Method:</label>
+                    <select id="watermarkMethod" onchange="toggleWatermarkMethod()">
+                        <option value="region">Region-based</option>
+                        <option value="corners">Frame Corners</option>
+                    </select>
+                </div>
+                
+                <div id="regionInputs">
+                    <div class="form-group">
+                        <label>Coordinate System:</label>
+                        <select id="coordinateSystem" onchange="toggleCoordinateSystem()">
+                            <option value="percent">Percentages (0-1)</option>
+                            <option value="pixels">Pixels</option>
+                        </select>
+                    </div>
+                    
+                    <div id="percentInputs" class="form-group">
+                        <label>Watermark Position (Percentages):</label>
+                        <input type="number" name="x_percent" value="0.3" step="0.1" min="0" max="1"> X Position (0-1)
+                        <input type="number" name="y_percent" value="0.3" step="0.1" min="0" max="1"> Y Position (0-1)
+                        
+                        <label>Watermark Size (Percentages):</label>
+                        <input type="number" name="width_percent" value="0.4" step="0.1" min="0" max="1"> Width (0-1)
+                        <input type="number" name="height_percent" value="0.4" step="0.1" min="0" max="1"> Height (0-1)
+                    </div>
+                    
+                    <div id="pixelInputs" class="form-group" style="display: none;">
+                        <label>Watermark Position (Pixels):</label>
+                        <input type="number" name="x_pixels" value="0" min="0"> X Position (pixels)
+                        <input type="number" name="y_pixels" value="0" min="0"> Y Position (pixels)
+                        
+                        <label>Watermark Size (Pixels):</label>
+                        <input type="number" name="width_pixels" value="0" min="0"> Width (pixels)
+                        <input type="number" name="height_pixels" value="0" min="0"> Height (pixels)
+                    </div>
+                </div>
+                
+                <div id="cornerInputs" class="form-group" style="display: none;">
+                    <p class="help-text">Watermark will be applied to the four corners of the image, with frame width automatically calculated as 10% of the image size.</p>
+                </div>
+                
+                <button type="submit">Add Watermark</button>
+            </form>
+        </div>
+        
+        <div class="section">
+            <h2>Verify Watermark</h2>
+            <form id="verifyForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="watermarked">Watermarked Image:</label>
+                    <input type="file" id="watermarked" name="watermarked" accept="image/*" required>
+                </div>
+                
+                <button type="submit">Verify Watermark</button>
+            </form>
+            
+            <div id="result"></div>
+        </div>
+    </div>
+
+    <script>
+        function toggleWatermarkMethod() {
+            const method = document.getElementById('watermarkMethod').value;
+            const regionInputs = document.getElementById('regionInputs');
+            const cornerInputs = document.getElementById('cornerInputs');
+            
+            if (method === 'region') {
+                regionInputs.style.display = 'block';
+                cornerInputs.style.display = 'none';
+            } else {
+                regionInputs.style.display = 'none';
+                cornerInputs.style.display = 'block';
+            }
+        }
+
+        function toggleCoordinateSystem() {
+            const system = document.getElementById('coordinateSystem').value;
+            const percentInputs = document.getElementById('percentInputs');
+            const pixelInputs = document.getElementById('pixelInputs');
+            
+            if (system === 'percent') {
+                percentInputs.style.display = 'block';
+                pixelInputs.style.display = 'none';
+            } else {
+                percentInputs.style.display = 'none';
+                pixelInputs.style.display = 'block';
+            }
+        }
+
+        document.getElementById('watermarkForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            // Add use_frame_corners flag based on watermark method selection
+            formData.append('use_frame_corners', 
+                document.getElementById('watermarkMethod').value === 'corners' ? 'true' : 'false');
+            
+            // Add use_pixels flag based on coordinate system selection
+            formData.append('use_pixels', 
+                document.getElementById('coordinateSystem').value === 'pixels' ? 'true' : 'false');
+            
+            try {
+                const response = await fetch('/watermark', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = formData.get('cover').name.replace(/\.[^/.]+$/, '') + '_watermarked.png';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        };
+
+        document.getElementById('verifyForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            try {
+                const response = await fetch('/verify', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    const resultDiv = document.getElementById('result');
+                    resultDiv.style.display = 'block';
+                    resultDiv.innerHTML = `
+                        <h3>Verification Results:</h3>
+                        <p>File: ${result.filename}</p>
+                        <p>Binary Message: ${result.binary_message}</p>
+                        <p>Readable Message: ${result.readable_message}</p>
+                        <p>Mask Confidence: ${(result.mask_confidence * 100).toFixed(2)}%</p>
+                    `;
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        };
+    </script>
+</body>
+</html> 
