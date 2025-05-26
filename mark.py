@@ -57,7 +57,7 @@ def process_image(img_path, message, mask_type=None, mask_params=None, output_pa
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = "checkpoints"
     json_path = os.path.join(exp_dir, "params.json")
-    ckpt_path = os.path.join(exp_dir, 'wam_mit.pth')
+    ckpt_path = os.path.join(exp_dir, 'wam_coco.pth')
     wam = load_model_from_checkpoint(json_path, ckpt_path).to(device).eval()
     
     # Load and process image

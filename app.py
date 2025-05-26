@@ -22,7 +22,7 @@ app = Flask(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 exp_dir = "checkpoints"
 json_path = os.path.join(exp_dir, "params.json")
-ckpt_path = os.path.join(exp_dir, 'wam_mit.pth')
+ckpt_path = os.path.join(exp_dir, 'wam_coco.pth')
 wam = load_model_from_checkpoint(json_path, ckpt_path).to(device).eval()
 
 def str_to_binary(msg_str, nbits=32):
@@ -120,7 +120,7 @@ def watermark_image():
         watermarked_filename = f"{filename_base}_watermarked{file_ext}"
         
         # Get watermark parameters
-        message = request.form.get('message', 'Hello World!')
+        message = request.form.get('message', 'Free Assange!')
         
         # Load and process image
         img = Image.open(cover_file).convert("RGB")
@@ -368,4 +368,4 @@ def verify_watermark():
 if __name__ == '__main__':
     # Create templates directory if it doesn't exist
     os.makedirs('templates', exist_ok=True)
-    app.run(host='0.0.0.0', port=5000, debug=True) 
+    app.run(host='0.0.0.0', port=11335, debug=True) 
