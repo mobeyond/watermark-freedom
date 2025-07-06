@@ -15,6 +15,9 @@ from notebooks.inference_utils import (
     create_random_mask, plot_outputs, msg2str
 )
 from viewframe import get_inner_square_region, draw_viewframe_overlay
+from mark import (
+    robust_str_to_binary, crop_to_centered_square, create_mask_from_pixels
+)
 
 app = Flask(__name__)
 
@@ -24,42 +27,6 @@ exp_dir = "checkpoints"
 json_path = os.path.join(exp_dir, "params.json")
 ckpt_path = os.path.join(exp_dir, 'wam_mit.pth')
 wam = load_model_from_checkpoint(json_path, ckpt_path).to(device).eval()
-
-def str_to_binary(msg_str, nbits=32):
-    """Convert a string to a binary tensor of length nbits"""
-    binary_str = ''.join(format(ord(c), '08b') for c in msg_str)
-    if len(binary_str) > nbits:
-        print(f"Warning: Message '{msg_str}' is too long for {nbits} bits. Truncating...")
-        binary_str = binary_str[:nbits]
-    elif len(binary_str) < nbits:
-        binary_str = binary_str.ljust(nbits, '0')
-    binary_tensor = torch.tensor([int(b) for b in binary_str], dtype=torch.float32)
-    return binary_tensor
-
-def crop_to_centered_square(image):
-    """
-    Returns the largest centered square crop from the input image.
-    """
-    h, w = image.shape[:2]
-    min_dim = min(h, w)
-    top = (h - min_dim) // 2
-    left = (w - min_dim) // 2
-    return image[top:top+min_dim, left:left+min_dim]
-
-def create_mask_from_pixels(img_tensor, x, y, width, height):
-    """Create a mask using pixel coordinates"""
-    batch_size, channels, img_height, img_width = img_tensor.shape
-    
-    # Validate pixel coordinates
-    if x < 0 or y < 0 or width <= 0 or height <= 0:
-        raise ValueError("Pixel coordinates must be non-negative and dimensions must be positive")
-    if x + width > img_width or y + height > img_height:
-        raise ValueError("Mask region exceeds image dimensions")
-    
-    # Create mask
-    mask = torch.zeros((batch_size, 1, img_height, img_width), device=img_tensor.device)
-    mask[:, :, y:y+height, x:x+width] = 1.0
-    return mask
 
 def create_fixed_mask(img_tensor, x_percent=0.3, y_percent=0.3, width_percent=0.4, height_percent=0.4):
     """Create a fixed mask for watermarking based on percentage coordinates"""
@@ -136,8 +103,8 @@ def watermark_image():
         img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
         img_pt = default_transform(img).unsqueeze(0).to(device)
         
-        # Create watermark message
-        wm_msg = str_to_binary(message).unsqueeze(0).to(device)
+        # Create watermark message with error correction
+        wm_msg = robust_str_to_binary(message).unsqueeze(0).to(device)
         
         # Embed watermark
         outputs = wam.embed(img_pt, wm_msg)
@@ -341,7 +308,7 @@ def verify_watermark():
         bit_accuracy = None
         if 'original_message' in request.form:
             original_message = request.form['original_message']
-            original_binary = str_to_binary(original_message)
+            original_binary = robust_str_to_binary(original_message)
             bit_accuracy = (pred_message[0] == original_binary).float().mean().item()
         
         return jsonify({

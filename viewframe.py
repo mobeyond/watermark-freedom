@@ -38,7 +38,7 @@ def draw_alpha_line(img, pt1, pt2, color, alpha, thickness):
     mask = line_img[..., 3] > 0
     img[mask] = line_img[mask]
 
-def draw_viewframe_overlay(image, corner_length_ratio=0.1, line_thickness=10, transparency=0.5):
+def draw_viewframe_overlay(image, corner_length_ratio=0.1, transparency=0.5):
     """
     Takes a square image and draws the transparent viewframe overlay.
     Returns the overlayed image.
@@ -46,6 +46,13 @@ def draw_viewframe_overlay(image, corner_length_ratio=0.1, line_thickness=10, tr
     assert image.shape[0] == image.shape[1], "Input image must be square. Use crop_to_centered_square first."
     square_img = image.copy()
     min_dim = square_img.shape[0]
+
+    # Control the width of the 4 corners to be proportional to the pixel size of the image
+    if min_dim < 80:
+        line_thickness = 2
+    else:
+        line_thickness = max(2, int(min_dim * 0.02))
+
     center = (min_dim // 2, min_dim // 2)
     radius = min_dim // 2
     inner_side = int(radius * np.sqrt(2))

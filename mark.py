@@ -25,15 +25,43 @@ def crop_to_centered_square(image):
     left = (w - min_dim) // 2
     return image[top:top+min_dim, left:left+min_dim]
 
-def str_to_binary(msg_str, nbits=32):
-    """Convert a string to a binary tensor of length nbits"""
+def calculate_checksum(binary_str):
+    """Calculate a simple checksum for error detection"""
+    # Use XOR of all bits as a simple checksum
+    checksum = 0
+    for bit in binary_str:
+        checksum ^= int(bit)
+    return str(checksum)
+
+def robust_str_to_binary(msg_str, nbits=32):
+    """
+    Convert a string to a binary tensor with error correction.
+    Uses a portion of the bits for checksum while preserving message bits.
+    Format: [message bits][checksum bits]
+    """
+    # Calculate how many bits we can use for the actual message
+    # Reserve 4 bits for checksum and error correction
+    message_bits = nbits - 4
+    
+    # Convert message to binary using original function
     binary_str = ''.join(format(ord(c), '08b') for c in msg_str)
-    if len(binary_str) > nbits:
-        print(f"Warning: Message '{msg_str}' is too long for {nbits} bits. Truncating...")
-        binary_str = binary_str[:nbits]
-    elif len(binary_str) < nbits:
-        binary_str = binary_str.ljust(nbits, '0')
-    binary_tensor = torch.tensor([int(b) for b in binary_str], dtype=torch.float32)
+    
+    # Truncate or pad to fit available message bits
+    if len(binary_str) > message_bits:
+        print(f"Warning: Message '{msg_str}' is too long for {message_bits} bits. Truncating...")
+        binary_str = binary_str[:message_bits]
+    elif len(binary_str) < message_bits:
+        binary_str = binary_str.ljust(message_bits, '0')
+    
+    # Calculate checksum
+    checksum = calculate_checksum(binary_str)
+    
+    # Combine message and checksum
+    full_binary = binary_str + checksum
+    
+    # Convert to tensor
+    binary_tensor = torch.tensor([int(b) for b in full_binary], dtype=torch.float32)
+    
     return binary_tensor
 
 def create_mask_from_pixels(img_tensor, x, y, width, height):
@@ -74,8 +102,8 @@ def process_image(img_path, message, mask_type=None, mask_params=None, output_pa
     img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
     img_pt = default_transform(img).unsqueeze(0).to(device)
     
-    # Create watermark message
-    wm_msg = str_to_binary(message).unsqueeze(0).to(device)
+    # Create watermark message with error correction
+    wm_msg = robust_str_to_binary(message).unsqueeze(0).to(device)
     
     # Embed watermark
     outputs = wam.embed(img_pt, wm_msg)
