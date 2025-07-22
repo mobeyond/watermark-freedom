@@ -141,3 +141,30 @@ def create_error_response(message, status_code=400, additional_info=None):
         response.update(additional_info)
 
     return jsonify(response), status_code
+
+def robust_binary_to_str(binary_tensor, nbits=32):
+    """
+    Convert a binary tensor back to a string, with checksum verification.
+    """
+    binary_str = "".join([str(int(b)) for b in binary_tensor])
+    
+    # Separate message and checksum
+    message_bits = nbits - 4
+    msg_part = binary_str[:message_bits]
+    checksum_part = binary_str[message_bits:]
+    
+    # Verify checksum
+    calculated_checksum = calculate_checksum(msg_part)
+    checksum_ok = (calculated_checksum == checksum_part)
+    
+    # Convert binary to string
+    readable_message = ""
+    for i in range(0, len(msg_part), 8):
+        byte = msg_part[i:i+8]
+        if '1' not in byte:  # Stop if we hit padding
+            break
+        char_code = int(byte, 2)
+        if char_code > 0:
+            readable_message += chr(char_code)
+            
+    return readable_message, checksum_ok
