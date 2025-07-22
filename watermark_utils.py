@@ -4,6 +4,12 @@ from PIL import Image
 import torch
 import cv2
 from flask import jsonify
+from typing import Tuple
+
+# ROCO imports
+from roco_core import encode_to_bits, decode_from_bits
+from roco_ecc import encode_with_ecc, decode_with_ecc
+
 
 def init_model(device=None):
     """Initialize the watermark model with default paths"""
@@ -168,3 +174,52 @@ def robust_binary_to_str(binary_tensor, nbits=32):
             readable_message += chr(char_code)
             
     return readable_message, checksum_ok
+
+def roco_encode_to_binary_tensor(payload: str) -> torch.Tensor:
+    """
+    Encodes a string payload using ROCO into a 32-bit binary tensor.
+    Payload is limited to 3 chars from the ROCO alphabet.
+    """
+    # 1. Encode payload string to 16-bit integer
+    data_bits = encode_to_bits(payload)
+    
+    # 2. Convert to 2-byte payload
+    payload_bytes = data_bits.to_bytes(2, 'big')
+    
+    # 3. Encode with ECC to get 4-byte (32-bit) codeword
+    codeword_bytes = encode_with_ecc(payload_bytes)
+    
+    # 4. Convert codeword to a binary string
+    binary_str = ''.join(format(byte, '08b') for byte in codeword_bytes)
+    
+    # 5. Convert binary string to a PyTorch tensor of floats
+    binary_tensor = torch.tensor([int(b) for b in binary_str], dtype=torch.float32)
+    
+    return binary_tensor
+
+def roco_decode_from_binary_tensor(binary_tensor: torch.Tensor) -> Tuple[str, bool, int]:
+    """
+    Decodes a 32-bit binary tensor using ROCO.
+    Returns the decoded payload, a validity flag, and the number of bitflips corrected.
+    """
+    # 1. Convert tensor back to a binary string
+    binary_str = "".join([str(int(b.item())) for b in binary_tensor])
+    
+    # 2. Convert 32-bit binary string to 4 bytes
+    if len(binary_str) != 32:
+        return "INVALID_LENGTH", False, -1
+    codeword_bytes = int(binary_str, 2).to_bytes(4, 'big')
+    
+    # 3. Decode with ECC
+    corrected_data, is_valid, bitflips = decode_with_ecc(codeword_bytes)
+    
+    if not corrected_data:
+        return "DECODE_FAIL", False, bitflips
+        
+    # 4. Convert corrected 2-byte payload back to 16-bit integer
+    data_bits = int.from_bytes(corrected_data, 'big')
+    
+    # 5. Decode bits to get the final string
+    decoded_payload = decode_from_bits(data_bits)
+    
+    return decoded_payload, is_valid, bitflips

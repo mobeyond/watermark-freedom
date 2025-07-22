@@ -13,8 +13,9 @@ from notebooks.inference_utils import (
 from viewframe import get_inner_square_region, draw_viewframe_overlay
 from watermark_utils import (
     init_model, load_image, crop_to_centered_square, pil_to_cv2, cv2_to_pil,
-    robust_str_to_binary, create_mask_from_coords, create_mask_from_percentages,
-    validate_pixel_coords, validate_percentage_coords, robust_binary_to_str
+    create_mask_from_coords, create_mask_from_percentages,
+    validate_pixel_coords, validate_percentage_coords,
+    roco_encode_to_binary_tensor, roco_decode_from_binary_tensor
 )
 
 def get_device():
@@ -72,7 +73,7 @@ def create_watermark_mask(img_pt, cv_img, mode, params=None):
 
 def embed_watermark(wam, img_pt, cv_img, message, mask):
     """Embeds the watermark into the image."""
-    wm_msg = robust_str_to_binary(message).unsqueeze(0).to(img_pt.device)
+    wm_msg = roco_encode_to_binary_tensor(message).unsqueeze(0).to(img_pt.device)
     outputs = wam.embed(img_pt, wm_msg)
     
     overlay = draw_viewframe_overlay(cv_img)
@@ -84,26 +85,34 @@ def embed_watermark(wam, img_pt, cv_img, message, mask):
     return img_w
 
 def verify_watermark(wam, img_pt, original_message=None):
-    """Verifies the watermark in an image."""
+    """Verifies the watermark in an image using ROCO ECC."""
     preds = wam.detect(img_pt)["preds"]
     mask_preds = torch.sigmoid(preds[:, 0, :, :])
     bit_preds = preds[:, 1:, :, :]
     
-    pred_message = msg_predict_inference(bit_preds, mask_preds).cpu().float()
-    binary_str = msg2str(pred_message[0].numpy())
-    readable_message, _ = robust_binary_to_str(pred_message[0])
+    pred_message_tensor = msg_predict_inference(bit_preds, mask_preds).cpu().float()
     
-    mask_confidence = mask_preds.mean().item()
+    # Use the new ROCO decoder
+    readable_message, is_valid, bitflips = roco_decode_from_binary_tensor(pred_message_tensor[0])
+    
+    # Calculate the bit error rate based on corrected bitflips
+    total_bits = 32
+    bit_error_rate = (bitflips / total_bits) * 100 if bitflips >= 0 else -1
+
+    binary_str = msg2str(pred_message_tensor[0].numpy())
     
     results = {
         'binary_message': binary_str,
         'readable_message': readable_message,
-        'mask_confidence': mask_confidence,
-        'bit_accuracy': None
+        'bit_error_rate_percent': bit_error_rate,
+        'corrected_bitflips': bitflips,
+        'ecc_valid': is_valid,
+        'bit_accuracy': None,
     }
     
     if original_message:
-        original_binary = robust_str_to_binary(original_message)
-        results['bit_accuracy'] = (pred_message[0] == original_binary).float().mean().item()
+        # Re-encode original message to compare for bit accuracy
+        original_binary_tensor = roco_encode_to_binary_tensor(original_message)
+        results['bit_accuracy'] = (pred_message_tensor[0] == original_binary_tensor).float().mean().item()
         
     return results

@@ -157,8 +157,11 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="message">Watermark Message:</label>
-                    <input type="text" id="message" name="message" value="Hello World!">
+                    <label for="message">Watermark Message (Payload):</label>
+                    <input type="text" id="message" name="message" value="ABC" maxlength="3" pattern="[A-Z4679#]*" oninput="this.value = this.value.toUpperCase()" style="text-transform: uppercase;" required>
+                    <p class="help-text">
+                        Up to 3 characters. Allowed: <strong>A-Z, 4, 6, 7, 9, #</strong>
+                    </p>
                 </div>
                 
                 <div class="form-group">
@@ -310,6 +313,34 @@
             e.preventDefault();
             const formData = new FormData(e.target);
             
+            // Read all coordinate and method settings from the form and append them
+            // to ensure the backend gets all required data for verification.
+            const watermarkMethod = document.getElementById('watermarkMethod').value;
+            const useCorners = watermarkMethod === 'corners';
+            formData.append('use_frame_corners', useCorners ? 'true' : 'false');
+
+            if (!useCorners) {
+                const coordSystem = document.getElementById('coordinateSystem').value;
+                const usePixels = coordSystem === 'pixels';
+                formData.append('use_pixels', usePixels ? 'true' : 'false');
+
+                if (usePixels) {
+                    formData.append('x_pixels', document.querySelector('#pixelInputs input[name="x_pixels"]').value);
+                    formData.append('y_pixels', document.querySelector('#pixelInputs input[name="y_pixels"]').value);
+                    formData.append('width_pixels', document.querySelector('#pixelInputs input[name="width_pixels"]').value);
+                    formData.append('height_pixels', document.querySelector('#pixelInputs input[name="height_pixels"]').value);
+                } else {
+                    formData.append('x_percent', document.querySelector('#percentInputs input[name="x_percent"]').value);
+                    formData.append('y_percent', document.querySelector('#percentInputs input[name="y_percent"]').value);
+                    formData.append('width_percent', document.querySelector('#percentInputs input[name="width_percent"]').value);
+                    formData.append('height_percent', document.querySelector('#percentInputs input[name="height_percent"]').value);
+                }
+            }
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<p>Verifying...</p>';
+
             try {
                 const response = await fetch('/verify', {
                     method: 'POST',
@@ -318,21 +349,23 @@
                 
                 if (response.ok) {
                     const result = await response.json();
-                    const resultDiv = document.getElementById('result');
-                    resultDiv.style.display = 'block';
                     resultDiv.innerHTML = `
                         <h3>Verification Results:</h3>
-                        <p>File: ${result.filename}</p>
-                        <p>Binary Message: ${result.binary_message}</p>
-                        <p>Readable Message: ${result.readable_message}</p>
-                        <p>Mask Confidence: ${(result.mask_confidence * 100).toFixed(2)}%</p>
+                        <p><strong>File:</strong> ${result.filename}</p>
+                        <p><strong>Decoded Message:</strong> ${result.readable_message}</p>
+                        <p><strong>Bit Error Rate:</strong> ${result.bit_error_rate_percent}</p>
+                        <p><strong>Corrected Bitflips:</strong> ${result.corrected_bitflips}</p>
+                        <p><strong>ECC Valid:</strong> ${result.is_valid_codeword}</p>
                     `;
+                    if (result.bit_accuracy_vs_original) {
+                        resultDiv.innerHTML += `<p><strong>Bit Accuracy (vs. Original):</strong> ${result.bit_accuracy_vs_original}</p>`;
+                    }
                 } else {
                     const error = await response.json();
-                    alert('Error: ' + error.error);
+                    resultDiv.innerHTML = `<p style="color: red;">Error: ${error.error}</p>`;
                 }
             } catch (error) {
-                alert('Error: ' + error.message);
+                resultDiv.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
             }
         };
     </script>

@@ -113,10 +113,21 @@ def verify_watermark_route():
         original_message = request.form.get('original_message')
         results = verify_watermark(wam, img_pt, original_message)
         
-        results['filename'] = secure_filename(watermarked_file.filename)
-        results['mask_region'] = coords
+        # Format the results for a user-friendly JSON response
+        final_response = {
+            'filename': secure_filename(watermarked_file.filename),
+            'readable_message': results['readable_message'],
+            'bit_error_rate_percent': f"{results['bit_error_rate_percent']:.2f}%" if results['bit_error_rate_percent'] >= 0 else "N/A",
+            'corrected_bitflips': results['corrected_bitflips'],
+            'is_valid_codeword': results['ecc_valid'],
+            'mask_region': coords,
+            'raw_binary_message': results['binary_message'],
+        }
+        
+        if results['bit_accuracy'] is not None:
+            final_response['bit_accuracy_vs_original'] = f"{results['bit_accuracy'] * 100:.2f}%"
 
-        return jsonify(results)
+        return jsonify(final_response)
 
     except (ValueError, KeyError) as e:
         return create_error_response(str(e), 400)
