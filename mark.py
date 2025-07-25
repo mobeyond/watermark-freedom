@@ -3,6 +3,7 @@ import torch
 import argparse
 from torchvision.utils import save_image
 from watermark_utils import init_model
+from notebooks.inference_utils import unnormalize_img
 from core import (
     preprocess_image, create_watermark_mask, embed_watermark
 )
@@ -26,19 +27,23 @@ def watermark_image_and_save(img_path, message, output_path=None, mask_mode='cor
     # Embed the watermark
     img_w, _ = embed_watermark(wam, img_pt, cv_img, message, mask)
 
+    # Un-normalize the image tensor before saving
+    img_w_to_save = unnormalize_img(img_w)
+
     # Determine output path
     if not output_path:
         filename_base, file_ext = os.path.splitext(img_path)
         output_path = f"{filename_base}_watermarked{file_ext}"
 
     # Save the watermarked image
-    save_image(img_w, output_path)
+    save_image(img_w_to_save, output_path)
 
     print(f"\nWatermark embedded successfully.")
     print(f"Mask coordinates: {coords}")
     print(f"Saved watermarked image to {output_path}")
 
     return output_path
+
 
 def main():
     parser = argparse.ArgumentParser(description='Watermark an image')

@@ -54,6 +54,8 @@ def get_mask_params_from_request(req):
 
 import base64
 
+from torchvision.utils import save_image
+
 @app.route('/watermark', methods=['POST'])
 def watermark_image_route():
     try:
@@ -77,11 +79,12 @@ def watermark_image_route():
 
         img_w, binary_message = embed_watermark(wam, img_pt, cv_img, message, mask)
 
-        img_w_pil = unnormalize_img(img_w).squeeze(0).cpu()
-        img_w_pil = Image.fromarray((img_w_pil.detach().numpy() * 255).astype(np.uint8).transpose(1, 2, 0))
+        # Un-normalize the image tensor before saving
+        img_w_to_save = unnormalize_img(img_w)
 
+        # Use a buffer and save_image to ensure consistency with mark.py
         img_buffer = io.BytesIO()
-        img_w_pil.save(img_buffer, format='PNG')
+        save_image(img_w_to_save, img_buffer, format='PNG')
         img_buffer.seek(0)
         
         # Encode image to base64

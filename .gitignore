@@ -1,6 +1,7 @@
 .git
+*.log
+*.pth
 __pycache__
 tin
 output
 outputs
-*.pth
