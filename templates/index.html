@@ -226,6 +226,11 @@
                 
                 <button type="submit">Add Watermark</button>
             </form>
+            <div id="watermarkResult" style="display: none; margin-top: 20px;">
+                <h3>Watermarking Complete</h3>
+                <p><strong>Binary Message:</strong> <code id="binaryMessage"></code></p>
+                <p>Your download will start automatically.</p>
+            </div>
         </div>
         
         <div class="section">
@@ -276,14 +281,15 @@
             e.preventDefault();
             const formData = new FormData(e.target);
             
-            // Add use_frame_corners flag based on watermark method selection
             formData.append('use_frame_corners', 
                 document.getElementById('watermarkMethod').value === 'corners' ? 'true' : 'false');
             
-            // Add use_pixels flag based on coordinate system selection
             formData.append('use_pixels', 
                 document.getElementById('coordinateSystem').value === 'pixels' ? 'true' : 'false');
             
+            const watermarkResultDiv = document.getElementById('watermarkResult');
+            watermarkResultDiv.style.display = 'none';
+
             try {
                 const response = await fetch('/watermark', {
                     method: 'POST',
@@ -291,15 +297,29 @@
                 });
                 
                 if (response.ok) {
-                    const blob = await response.blob();
+                    const result = await response.json();
+                    
+                    // Decode base64 image and create a download link
+                    const byteCharacters = atob(result.image);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    const blob = new Blob([byteArray], {type: 'image/png'});
                     const url = window.URL.createObjectURL(blob);
+                    
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = formData.get('cover').name.replace(/\.[^/.]+$/, '') + '_watermarked.png';
+                    a.download = result.filename;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
                     window.URL.revokeObjectURL(url);
+                    
+                    document.getElementById('binaryMessage').textContent = result.binary_message;
+                    watermarkResultDiv.style.display = 'block';
+
                 } else {
                     const error = await response.json();
                     alert('Error: ' + error.error);
@@ -356,6 +376,7 @@
                         <p><strong>Bit Error Rate:</strong> ${result.bit_error_rate_percent}</p>
                         <p><strong>Corrected Bitflips:</strong> ${result.corrected_bitflips}</p>
                         <p><strong>ECC Valid:</strong> ${result.is_valid_codeword}</p>
+                        <p><strong>Raw Binary Message:</strong> ${result.raw_binary_message}</p>
                     `;
                     if (result.bit_accuracy_vs_original) {
                         resultDiv.innerHTML += `<p><strong>Bit Accuracy (vs. Original):</strong> ${result.bit_accuracy_vs_original}</p>`;

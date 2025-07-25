@@ -1,155 +1,122 @@
 # Project Structure
 
-## Main Components
+## Root Directory
+- .gitignore
+- app.py
+- core.py
+- DldPic.cmp
+- DldPic.txt
+- LICENSE
+- LICENSE-COCO
+- mark.py
+- README.md
+- requirements.txt
+- roco_core.py
+- roco_ecc.py
+- structure.md
+- test_watermark.py
+- train.py
+- verify.py
+- viewframe.py
 
-- **app.py**: Flask application for watermarking and verification
-  - Imports: Flask, PIL, torch, cv2, numpy, various custom modules
-  - Functions:
-    - `create_fixed_mask()`: Creates a fixed mask based on percentage coordinates
-    - `get_viewframe_overlay_and_inner_square()`: Gets viewframe overlay and inner square region
-  - Routes:
-    - `/`: Serves the index.html template
-    - `/watermark` (POST): Endpoint to watermark an image
-      - Accepts cover image, message, mask parameters
-      - Processes image and applies watermark using model
-      - Returns watermarked image as downloadable PNG
-    - `/verify` (POST): Endpoint to verify a watermarked image
-      - Accepts watermarked image, mask parameters
-      - Detects and extracts embedded message
-      - Returns verification results with confidence
+## Assets Directory
+- assets/
+  - splash_wam.jpg
+  - images/
+    - alpaca.jpg
+    - ducks.jpg
+    - gauguin_256.jpg
+    - seabackground.jpg
+    - trex_bike.jpg
+  - masks/
+    - ducks_1.jpg
+    - ducks_2.jpg
 
-- **mark.py**: Command-line tool for watermarking images
-  - Imports: PIL, torch, cv2, numpy, argparse, various custom modules
-  - Functions:
-    - `crop_to_centered_square()`: Crops image to centered square
-    - `calculate_checksum()`: Calculates checksum for error detection
-    - `robust_str_to_binary()`: Converts string message to binary tensor with error correction
-    - `create_mask_from_pixels()`: Creates mask from pixel coordinates
-    - `process_image()`: Processes image with watermarking based on mask type
-  - Main functionality:
-    - Parses command-line arguments for input image, message, and mask parameters
-    - Calls `process_image()` to apply watermark and save output
+## Checkpoints Directory
+- checkpoints/
+  - params.json
 
-- **verify.py**: Command-line tool for verifying watermarks in images
-  - Imports: PIL, torch, argparse, various custom modules
-  - Functions:
-    - None (main functionality directly in main())
-  - Main functionality:
-    - Parses command-line arguments for input image and mask parameters
-    - Loads model and processes image to extract embedded message
-    - Displays verification results with confidence score
+## Configs Directory
+- configs/
+  - all_augs_multi_wm.yaml
+  - all_augs.yaml
+  - attenuation.yaml
+  - embedder.yaml
+  - extractor.yaml
 
-## Shared Functionality
+## Notebooks Directory
+- notebooks/
+  - colab.ipynb
+  - inference_utils.py
+  - inference.ipynb
 
-- All scripts use the following shared components:
-  - Model loading from checkpoint: `load_model_from_checkpoint()`
-  - Image transformations: `default_transform()`, `unnormalize_img()`
-  - Message processing: `msg_predict_inference()`, `msg2str()`
+## Source Directory
+- src/
+  - components/
 
-## Workflow Overview
+## Templates Directory
+- templates/
+  - index.html
 
-1. **Watermarking**:
-   - Use `mark.py` CLI tool or `/watermark` endpoint in `app.py`
-   - Provide input image, message, and mask parameters
-   - Output is watermarked image with embedded message
+## Tin Directory
+- tin/
+  - alpaca.jpg
+  - cover.png
+  - ducks.jpg
+  - gauguin_256.jpg
+  - Screenshot from 2025-06-11 15-53-07.png
+  - Screenshot from 2025-06-11 15-59-19.png
+  - Screenshot from 2025-06-11 16-01-48.png
+  - seabackground.jpg
+  - trex_bike.jpg
 
-2. **Verification**:
-   - Use `verify.py` CLI tool or `/verify` endpoint in `app.py`
-   - Provide watermarked image and mask parameters
-   - Output includes extracted message and confidence score
+## Tin Watermarked Directory
+- tin_watermarked/
+  - alpaca.jpg
+  - ducks.jpg
+  - gauguin_256.jpg
+  - seabackground.jpg
+  - trex_bike.jpg
 
+## Watermark Anything Directory
+- watermark_anything/
+  - augmentation/
+    - __init__.py
+    - augmenter.py
+    - geometric.py
+    - masks.py
+    - valuemetric.py
+  - data/
+    - __init__.py
+    - loader.py
+    - metrics.py
+    - transforms.py
+  - losses/
+    - __init__.py
+    - detperceptual.py
+    - perceptual.py
+    - ssim.py
+    - yuvloss.py
+  - models/
+    - __init__.py
+    - embedder.py
+    - extractor.py
+    - wam.py
+  - modules/
+    - __init__.py
+    - common.py
+    - discriminator.py
+    - jnd.py
+    - msg_processor.py
+    - pixel_decoder.py
+    - vae.py
+    - vit.py
+  - utils/
+    - __init__.py
+    - dist.py
+    - image.py
+    - logger.py
+    - optim.py
 
-
-
-+-------------------------------------------------------+
-|                   Top-level Scripts                   |
-+-------------------------------------------------------+
-| app.py:                                              |
-|   - index()                                           |
-|   - watermark_image()                                 |
-|   - verify_watermark()                                |
-|                                                       |
-| mark.py:                                             |
-|   - process_image()                                   |
-|   - main()                                            |
-|                                                       |
-| train.py:                                            |
-|   - get_parser()                                      |
-|   - main()                                            |
-|   - train_one_epoch()                                 |
-|   - eval_full()                                       |
-|   - eval_full_kwm()                                   |
-|                                                       |
-| verify.py:                                           |
-|   - main()                                            |
-|                                                       |
-| viewframe.py:                                        |
-|   - get_inner_square_region()                         |
-|   - draw_viewframe_overlay()                          |
-+-------------------------------------------------------+
-
-+----------------------------+
-|    Watermark Anything      |
-|       Core Modules         |
-+----------------------------+
-| models/                    |
-|   - Wam class              |
-|     - forward()            |
-|     - embed()              |
-|     - detect()             |
-|   - Embedder class         |
-|     - get_random_msg()     |
-|     - forward()            |
-|   - Extractor class        |
-|     - forward()            |
-+----------------------------+
-| modules/                   |
-|   - MsgProcessor class     |
-|     - forward()            |
-|   - JND class              |
-|     - forward()            |
-|   - PixelDecoder class     |
-|     - forward()            |
-|   - Discriminator classes  |
-|     - forward()            |
-+----------------------------+
-| augmentation/              |
-|   - Augmenter class        |
-|     - forward()            |
-|   - Geometric transforms   |
-|     - Identity             |
-|     - Rotate               |
-|     - Resize               |
-|     - Crop                 |
-|     - HorizontalFlip       |
-+----------------------------+
-| losses/                    |
-|   - PerceptualLoss class   |
-|     - forward()            |
-|   - SSIM class             |
-|     - forward()            |
-|   - YUVLoss class          |
-|     - forward()            |
-+----------------------------+
-| data/                      |
-|   - ImageFolder class      |
-|     - __getitem__()        |
-|   - CocoImageIDWrapper     |
-|     - __getitem__()        |
-+----------------------------+
-
-+--------------------------------------+
-|           Utility Modules            |
-+--------------------------------------+
-| utils/                              |
-|   - image.py:                        |
-|     - jpeg_compress()                |
-|     - detect_wm_hm()                 |
-|   - logger.py:                       |
-|     - MetricLogger class             |
-|       - update()                     |
-|       - log_every()                  |
-|   - optim.py:                        |
-|     - build_optimizer()              |
-+--------------------------------------+
-
+## Relations and Structure
+The project is structured to separate different functionalities into distinct directories. The `watermark_anything` directory contains the core modules and components for the watermarking functionality, organized into subdirectories for augmentation, data handling, losses, models, modules, and utilities. The `assets` directory holds various images and masks used in the project. The `configs` directory contains configuration files for different settings and parameters. The `notebooks` directory includes Jupyter notebooks for data analysis and inference. The `src` directory is intended for source code components, although it currently only contains an empty `components` subdirectory. The `templates` directory holds HTML templates. The `tin` and `tin_watermarked` directories contain original and watermarked images, respectively. The root directory includes various Python scripts and configuration files necessary for the project's operation.

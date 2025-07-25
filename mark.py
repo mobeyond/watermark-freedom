@@ -24,7 +24,7 @@ def watermark_image_and_save(img_path, message, output_path=None, mask_mode='cor
         raise ValueError("Could not create a valid mask for watermarking.")
 
     # Embed the watermark
-    img_w = embed_watermark(wam, img_pt, cv_img, message, mask)
+    img_w, _ = embed_watermark(wam, img_pt, cv_img, message, mask)
 
     # Determine output path
     if not output_path:
@@ -43,7 +43,7 @@ def watermark_image_and_save(img_path, message, output_path=None, mask_mode='cor
 def main():
     parser = argparse.ArgumentParser(description='Watermark an image')
     parser.add_argument('--cover', type=str, required=True, help='Path to cover image')
-    parser.add_argument('--message', type=str, default='Hello World!', help='Message to embed')
+    parser.add_argument('--message', type=str, default='SIR', help='Message to embed')
     parser.add_argument('--output', type=str, help='Path to save watermarked image')
 
     # Mask type group
@@ -100,4 +100,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

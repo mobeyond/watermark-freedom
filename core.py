@@ -73,7 +73,8 @@ def create_watermark_mask(img_pt, cv_img, mode, params=None):
 
 def embed_watermark(wam, img_pt, cv_img, message, mask):
     """Embeds the watermark into the image."""
-    wm_msg = roco_encode_to_binary_tensor(message).unsqueeze(0).to(img_pt.device)
+    wm_msg_tensor = roco_encode_to_binary_tensor(message)
+    wm_msg = wm_msg_tensor.unsqueeze(0).to(img_pt.device)
     outputs = wam.embed(img_pt, wm_msg)
     
     overlay = draw_viewframe_overlay(cv_img)
@@ -82,7 +83,10 @@ def embed_watermark(wam, img_pt, cv_img, message, mask):
     
     img_w = outputs['imgs_w'] * mask + overlay_pt * (1 - mask)
     
-    return img_w
+    # Convert the binary tensor to a string for display
+    binary_message_str = "".join(map(str, wm_msg_tensor.int().tolist()))
+    
+    return img_w, binary_message_str
 
 def verify_watermark(wam, img_pt, original_message=None):
     """Verifies the watermark in an image using ROCO ECC."""

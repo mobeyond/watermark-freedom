@@ -52,6 +52,8 @@ def get_mask_params_from_request(req):
         except (ValueError, KeyError):
             raise ValueError('Percentage values must be provided as valid numbers.')
 
+import base64
+
 @app.route('/watermark', methods=['POST'])
 def watermark_image_route():
     try:
@@ -73,7 +75,7 @@ def watermark_image_route():
         mask_mode, mask_params = get_mask_params_from_request(request)
         mask, _ = create_watermark_mask(img_pt, cv_img, mask_mode, mask_params)
 
-        img_w = embed_watermark(wam, img_pt, cv_img, message, mask)
+        img_w, binary_message = embed_watermark(wam, img_pt, cv_img, message, mask)
 
         img_w_pil = unnormalize_img(img_w).squeeze(0).cpu()
         img_w_pil = Image.fromarray((img_w_pil.detach().numpy() * 255).astype(np.uint8).transpose(1, 2, 0))
@@ -81,13 +83,15 @@ def watermark_image_route():
         img_buffer = io.BytesIO()
         img_w_pil.save(img_buffer, format='PNG')
         img_buffer.seek(0)
+        
+        # Encode image to base64
+        encoded_img = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
 
-        return send_file(
-            img_buffer,
-            mimetype='image/png',
-            as_attachment=True,
-            download_name=watermarked_filename
-        )
+        return jsonify({
+            'image': encoded_img,
+            'filename': watermarked_filename,
+            'binary_message': binary_message
+        })
 
     except (ValueError, KeyError) as e:
         return create_error_response(str(e), 400)
