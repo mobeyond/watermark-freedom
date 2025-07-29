@@ -1,41 +1,22 @@
 import os
-import torch
 import argparse
 from torchvision.utils import save_image
-from watermark_utils import init_model
 from notebooks.inference_utils import unnormalize_img
-from core import (
-    preprocess_image, create_watermark_mask, embed_watermark
-)
+from core import WatermarkManager
 
 def watermark_image_and_save(img_path, message, output_path=None, mask_mode='corners', mask_params=None):
     """
     Loads an image, embeds a watermark, and saves the result.
     """
-    # Initialize model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    wam = init_model().to(device).eval()
-
-    # Preprocess the image
-    img_pt, cv_img = preprocess_image(img_path)
-
-    # Create the watermark mask
-    mask, coords = create_watermark_mask(img_pt, cv_img, mask_mode, mask_params)
-    if mask is None:
-        raise ValueError("Could not create a valid mask for watermarking.")
-
-    # Embed the watermark
-    img_w, _ = embed_watermark(wam, img_pt, cv_img, message, mask)
-
-    # Un-normalize the image tensor before saving
+    watermarker = WatermarkManager()
+    img_w, _, coords = watermarker.embed(img_path, message, mask_mode, mask_params)
+    
     img_w_to_save = unnormalize_img(img_w)
 
-    # Determine output path
     if not output_path:
         filename_base, file_ext = os.path.splitext(img_path)
         output_path = f"{filename_base}_watermarked{file_ext}"
 
-    # Save the watermarked image
     save_image(img_w_to_save, output_path)
 
     print(f"\nWatermark embedded successfully.")
@@ -43,6 +24,7 @@ def watermark_image_and_save(img_path, message, output_path=None, mask_mode='cor
     print(f"Saved watermarked image to {output_path}")
 
     return output_path
+
 
 
 def main():

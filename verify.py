@@ -1,22 +1,13 @@
 import os
-import torch
 import argparse
-from watermark_utils import init_model
-from core import preprocess_image, verify_watermark
+from core import WatermarkManager
 
 def verify_image_and_print(img_path, original_message=None):
     """
-    Loads a watermarked image, verifies the watermark using ROCO, and prints the results.
+    Loads a watermarked image, verifies the watermark, and prints the results.
     """
-    # Initialize model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    wam = init_model(device)
-
-    # Preprocess the image
-    img_pt, _ = preprocess_image(img_path)
-
-    # Verify the watermark
-    results = verify_watermark(wam, img_pt, original_message)
+    watermarker = WatermarkManager()
+    results = watermarker.verify(img_path, original_message)
 
     # Print results
     print(f"\n--- Verification Results for {os.path.basename(img_path)} ---")
@@ -29,7 +20,7 @@ def verify_image_and_print(img_path, original_message=None):
     else:
         print("Bit Error Rate: N/A (Decoding failed)")
 
-    if results['bit_accuracy'] is not None:
+    if results.get('bit_accuracy') is not None:
         print(f"Bit Accuracy vs. Original: {results['bit_accuracy'] * 100:.2f}%")
     
     print(f"Raw Binary Message: {results['binary_message']}")

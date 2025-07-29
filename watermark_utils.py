@@ -11,20 +11,6 @@ from roco_core import encode_to_bits, decode_from_bits
 from roco_ecc import encode_with_ecc, decode_with_ecc
 
 
-def init_model(device=None):
-    """Initialize the watermark model with default paths"""
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    exp_dir = "checkpoints"
-    json_path = os.path.join(exp_dir, "params.json")
-    ckpt_path = os.path.join(exp_dir, 'wam_mit.pth')
-
-    from notebooks.inference_utils import load_model_from_checkpoint
-    model = load_model_from_checkpoint(json_path, ckpt_path).to(device).eval()
-
-    return model
-
 def load_image(image_file):
     """Load an image file and convert to RGB format"""
     img = Image.open(image_file).convert("RGB")
