@@ -119,6 +119,10 @@ def verify_watermark_route():
             'raw_binary_message': results['binary_message'],
         }
         
+        # Add viewframe info if available
+        if 'viewframe' in results:
+            final_response['viewframe'] = results['viewframe']
+        
         if results.get('bit_accuracy') is not None:
             final_response['bit_accuracy_vs_original'] = f"{results['bit_accuracy'] * 100:.2f}%"
 

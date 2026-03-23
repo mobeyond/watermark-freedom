@@ -161,19 +161,87 @@ class WatermarkManager:
         
         return img_w, binary_message_str, coords
 
+    def _detect_viewframe_corners(self, cv_img):
+        """Auto-detect viewframe corners from the image.
+        
+        The viewframe has 4 corner brackets (L-shaped white lines, value 255).
+        Returns: (x, y, width, height) of the viewframe region, or None if not found.
+        """
+        import cv2
+        
+        h, w = cv_img.shape[:2]
+        
+        # Convert to grayscale
+        if len(cv_img.shape) == 3:
+            gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = cv_img
+        
+        # Find exactly 255 pixels (the corner brackets are pure white)
+        bright_mask = (gray == 255).astype(np.uint8) * 255
+        
+        # Find the bounding box of all 255 pixels
+        rows, cols = np.where(bright_mask > 0)
+        
+        if len(rows) == 0:
+            return None
+        
+        # The 255 pixels form 4 L-shaped corner brackets
+        # The corner brackets are drawn with line_thickness=3
+        # So the actual corner position is offset by ~1 pixel from the edge
+        
+        # Find the outer edge of each corner bracket
+        # Top-left: outer edge is at the smallest x and y
+        tl_mask = (rows < h//2) & (cols < w//2)
+        if tl_mask.sum() == 0:
+            return None
+        tl_x = cols[tl_mask].min()  # Leftmost 255 pixel
+        tl_y = rows[tl_mask].min()  # Topmost 255 pixel
+        
+        # Top-right: outer edge is at the largest x, smallest y
+        tr_mask = (rows < h//2) & (cols > w//2)
+        if tr_mask.sum() == 0:
+            return None
+        tr_x = cols[tr_mask].max()  # Rightmost 255 pixel
+        tr_y = rows[tr_mask].min()  # Topmost 255 pixel
+        
+        # Bottom-left: outer edge is at the smallest x, largest y
+        bl_mask = (rows > h//2) & (cols < w//2)
+        if bl_mask.sum() == 0:
+            return None
+        bl_x = cols[bl_mask].min()  # Leftmost 255 pixel
+        bl_y = rows[bl_mask].max()  # Bottommost 255 pixel
+        
+        # Bottom-right: outer edge is at the largest x and y
+        br_mask = (rows > h//2) & (cols > w//2)
+        if br_mask.sum() == 0:
+            return None
+        br_x = cols[br_mask].max()  # Rightmost 255 pixel
+        br_y = rows[br_mask].max()  # Bottommost 255 pixel
+        
+        # The viewframe region is defined by the outer corners
+        # Adjust for line thickness (line is centered on the coordinate)
+        # For thickness=3, the line extends ~1 pixel on each side
+        line_thickness_offset = 2
+        
+        x = tl_x + line_thickness_offset
+        y = tl_y + line_thickness_offset
+        width = tr_x - tl_x - 2 * line_thickness_offset
+        height = bl_y - tl_y - 2 * line_thickness_offset
+        
+        return x, y, width, height
+
     def verify(self, image_source, original_message=None, viewframe_coords=None):
         img_pt, cv_img = self._preprocess_image(image_source)
         h, w = img_pt.shape[2:]
         
-        # Get viewframe region based on params
-        if viewframe_coords:
-            # Use provided coordinates
-            x = int(viewframe_coords.get('x_percent', 0) * w)
-            y = int(viewframe_coords.get('y_percent', 0) * h)
-            width = int(viewframe_coords.get('width_percent', 0) * w)
-            height = int(viewframe_coords.get('height_percent', 0) * h)
+        # Auto-detect viewframe corners from the image
+        detected = self._detect_viewframe_corners(cv_img)
+        
+        if detected:
+            x, y, width, height = detected
         else:
-            # Default: centered square (same as embed)
+            # Fallback: default centered square
             min_dim = min(h, w)
             center = (w // 2, h // 2)
             square_size = int(min_dim * 0.7)
@@ -205,6 +273,17 @@ class WatermarkManager:
             'corrected_bitflips': bitflips,
             'ecc_valid': is_valid,
             'bit_accuracy': None,
+            'viewframe': {
+                'x': x,
+                'y': y,
+                'width': width,
+                'height': height,
+                'x_percent': x / w,
+                'y_percent': y / h,
+                'width_percent': width / w,
+                'height_percent': height / h,
+                'ratio': (width * height) / (w * h),
+            },
         }
         
         if original_message:
