@@ -8,7 +8,9 @@ import bchlib
 from typing import Tuple
 
 # BCH object for m=6, t=2 (n=63, but we will shorten to 32 bits)
-BCH = bchlib.BCH(t=2, m=6)
+# New bchlib 2.x API: BCH(polynomial, t)
+# Primitive polynomial for GF(2^6): x^6 + x + 1 = 0x43
+BCH = bchlib.BCH(0x43, 2)
 
 ALPHABET = "234679ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ALPHABET_MAP = {char: i for i, char in enumerate(ALPHABET)}
@@ -28,21 +30,21 @@ def decode_with_ecc(codeword: bytes) -> Tuple[bytes, bool, int]:
         return b"", False, -1
     data = bytearray(codeword[:2])
     ecc = bytearray(codeword[2:])
-    # 1. DECODE: Find bit error locations
+
+    # New bchlib 2.x API: decode() returns (bitflips, corrected_data, corrected_ecc)
+    # Old API: decode() returns just bitflips, then need correct()
     try:
-        bitflips = BCH.decode(data, ecc)
+        result = BCH.decode(data, ecc)
+        if isinstance(result, tuple):
+            bitflips, data, ecc = result
+        else:
+            # Old API: need to call correct()
+            bitflips = result
+            if bitflips > 0 and hasattr(BCH, 'correct'):
+                BCH.correct(data, ecc)
     except Exception:
-        return data, False, -1
-    # 2. CORRECT: Fix the errors in-place
-    if bitflips > 0:
-        try:
-            BCH.correct(data, ecc)
-        except Exception:
-            return data, False, -1
-    # Final check
-    try:
-        final_flips = BCH.decode(data, ecc)
-    except Exception:
-        return data, False, -1
-    is_valid = (final_flips == 0)
+        return bytes(data), False, -1
+    
+    # Check if properly corrected
+    is_valid = (bitflips >= 0 and bitflips <= BCH.t)
     return bytes(data), is_valid, bitflips

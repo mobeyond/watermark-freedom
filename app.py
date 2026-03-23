@@ -52,7 +52,7 @@ def watermark_image_route():
         message = request.form.get('message', 'Hello World!')
         mask_mode, mask_params = get_mask_params_from_request(request)
 
-        img_w, binary_message, _ = watermarker.embed(cover_file, message, mask_mode, mask_params)
+        img_w, binary_message, coords = watermarker.embed(cover_file, message, mask_mode, mask_params)
         
         img_w_to_save = unnormalize_img(img_w)
         img_buffer = io.BytesIO()
@@ -65,10 +65,19 @@ def watermark_image_route():
         filename_base, file_ext = os.path.splitext(original_filename)
         watermarked_filename = f"{filename_base}_watermarked{file_ext}"
 
+        # Calculate viewframe coordinates for frontend overlay
+        viewframe = {
+            'x': coords.get('x_percent', 0),
+            'y': coords.get('y_percent', 0),
+            'width': coords.get('width_percent', 0),
+            'height': coords.get('height_percent', 0)
+        }
+        
         return jsonify({
             'image': encoded_img,
             'filename': watermarked_filename,
-            'binary_message': binary_message
+            'binary_message': binary_message,
+            'viewframe': viewframe
         })
 
     except (ValueError, KeyError) as e:
@@ -87,7 +96,18 @@ def verify_watermark_route():
             return create_error_response('No selected file', 400)
 
         original_message = request.form.get('original_message')
-        results = watermarker.verify(watermarked_file, original_message)
+        
+        # Get viewframe coordinates if provided
+        viewframe_coords = None
+        if 'viewframe_x' in request.form:
+            viewframe_coords = {
+                'x_percent': float(request.form.get('viewframe_x', 0)),
+                'y_percent': float(request.form.get('viewframe_y', 0)),
+                'width_percent': float(request.form.get('viewframe_width', 0)),
+                'height_percent': float(request.form.get('viewframe_height', 0))
+            }
+        
+        results = watermarker.verify(watermarked_file, original_message, viewframe_coords)
         
         # Format the results for a user-friendly JSON response, matching frontend keys
         final_response = {

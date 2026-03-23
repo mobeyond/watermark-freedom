@@ -184,38 +184,38 @@
                     <div id="percentInputs" class="form-group">
                         <div>
                             <label>X Position (0-1)</label>
-                            <input type="number" name="x_percent" value="0.3" step="0.1" min="0" max="1">
+                            <input type="number" name="x_percent" id="x_percent" value="0.15" step="0.05" min="0" max="0.5" onchange="updatePercentSize()">
                         </div>
                         <div>
                             <label>Y Position (0-1)</label>
-                            <input type="number" name="y_percent" value="0.3" step="0.1" min="0" max="1">
+                            <input type="number" name="y_percent" id="y_percent" value="0.15" step="0.05" min="0" max="0.5" onchange="updatePercentSize()">
                         </div>
                         <div>
-                            <label>Width (0-1)</label>
-                            <input type="number" name="width_percent" value="0.4" step="0.1" min="0" max="1">
+                            <label>Width (0-1) - Auto</label>
+                            <input type="number" name="width_percent" id="width_percent" value="0.7" step="0.05" min="0" max="1" readonly disabled style="background: #f0f0f0;">
                         </div>
                         <div>
-                            <label>Height (0-1)</label>
-                            <input type="number" name="height_percent" value="0.4" step="0.1" min="0" max="1">
+                            <label>Height (0-1) - Auto</label>
+                            <input type="number" name="height_percent" id="height_percent" value="0.7" step="0.05" min="0" max="1" readonly disabled style="background: #f0f0f0;">
                         </div>
                     </div>
                     
                     <div id="pixelInputs" class="form-group" style="display: none;">
                         <div>
                             <label>X Position (pixels)</label>
-                            <input type="number" name="x_pixels" value="0" min="0">
+                            <input type="number" name="x_pixels" id="x_pixels" value="0" min="0" onchange="updatePixelSize()">
                         </div>
                         <div>
                             <label>Y Position (pixels)</label>
-                            <input type="number" name="y_pixels" value="0" min="0">
+                            <input type="number" name="y_pixels" id="y_pixels" value="0" min="0" onchange="updatePixelSize()">
                         </div>
                         <div>
-                            <label>Width (pixels)</label>
-                            <input type="number" name="width_pixels" value="0" min="0">
+                            <label>Width (pixels) - Auto</label>
+                            <input type="number" name="width_pixels" id="width_pixels" value="0" min="0" readonly disabled style="background: #f0f0f0;">
                         </div>
                         <div>
-                            <label>Height (pixels)</label>
-                            <input type="number" name="height_pixels" value="0" min="0">
+                            <label>Height (pixels) - Auto</label>
+                            <input type="number" name="height_pixels" id="height_pixels" value="0" min="0" readonly disabled style="background: #f0f0f0;">
                         </div>
                     </div>
                 </div>
@@ -249,6 +249,31 @@
     </div>
 
     <script>
+        // Auto-calculate Width/Height from X,Y (centered square)
+        function updatePercentSize() {
+            const x = parseFloat(document.getElementById('x_percent').value) || 0;
+            const y = parseFloat(document.getElementById('y_percent').value) || 0;
+            // Use median of X and Y
+            const median = (x + y) / 2;
+            // Calculate size for centered square: 1 - 2*median
+            const size = Math.max(0, 1 - 2 * median);
+            document.getElementById('width_percent').value = size.toFixed(2);
+            document.getElementById('height_percent').value = size.toFixed(2);
+        }
+        
+        function updatePixelSize() {
+            const x = parseInt(document.getElementById('x_pixels').value) || 0;
+            const y = parseInt(document.getElementById('y_pixels').value) || 0;
+            // Use median of X and Y
+            const median = Math.round((x + y) / 2);
+            // Assume image is 256x256 for now (will be updated by server)
+            const imgSize = 256;
+            // Calculate size for centered square: imgSize - 2*median
+            const size = Math.max(0, imgSize - 2 * median);
+            document.getElementById('width_pixels').value = size;
+            document.getElementById('height_pixels').value = size;
+        }
+        
         function toggleWatermarkMethod() {
             const method = document.getElementById('watermarkMethod').value;
             const regionInputs = document.getElementById('regionInputs');
@@ -277,15 +302,36 @@
             }
         }
 
+        // Initialize Width/Height on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            updatePercentSize();
+            updatePixelSize();
+        });
+        
         document.getElementById('watermarkForm').onsubmit = async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             
-            formData.append('use_frame_corners', 
-                document.getElementById('watermarkMethod').value === 'corners' ? 'true' : 'false');
+            const useCorners = document.getElementById('watermarkMethod').value === 'corners';
+            formData.append('use_frame_corners', useCorners ? 'true' : 'false');
             
-            formData.append('use_pixels', 
-                document.getElementById('coordinateSystem').value === 'pixels' ? 'true' : 'false');
+            const usePixels = document.getElementById('coordinateSystem').value === 'pixels';
+            formData.append('use_pixels', usePixels ? 'true' : 'false');
+            
+            // Append width/height from disabled fields (not submitted automatically)
+            if (!useCorners) {
+                if (usePixels) {
+                    formData.append('width_pixels', document.getElementById('width_pixels').value);
+                    formData.append('height_pixels', document.getElementById('height_pixels').value);
+                    formData.append('x_pixels', document.getElementById('x_pixels').value);
+                    formData.append('y_pixels', document.getElementById('y_pixels').value);
+                } else {
+                    formData.append('width_percent', document.getElementById('width_percent').value);
+                    formData.append('height_percent', document.getElementById('height_percent').value);
+                    formData.append('x_percent', document.getElementById('x_percent').value);
+                    formData.append('y_percent', document.getElementById('y_percent').value);
+                }
+            }
             
             const watermarkResultDiv = document.getElementById('watermarkResult');
             watermarkResultDiv.style.display = 'none';
@@ -345,15 +391,15 @@
                 formData.append('use_pixels', usePixels ? 'true' : 'false');
 
                 if (usePixels) {
-                    formData.append('x_pixels', document.querySelector('#pixelInputs input[name="x_pixels"]').value);
-                    formData.append('y_pixels', document.querySelector('#pixelInputs input[name="y_pixels"]').value);
-                    formData.append('width_pixels', document.querySelector('#pixelInputs input[name="width_pixels"]').value);
-                    formData.append('height_pixels', document.querySelector('#pixelInputs input[name="height_pixels"]').value);
+                    formData.append('x_pixels', document.getElementById('x_pixels').value);
+                    formData.append('y_pixels', document.getElementById('y_pixels').value);
+                    formData.append('width_pixels', document.getElementById('width_pixels').value);
+                    formData.append('height_pixels', document.getElementById('height_pixels').value);
                 } else {
-                    formData.append('x_percent', document.querySelector('#percentInputs input[name="x_percent"]').value);
-                    formData.append('y_percent', document.querySelector('#percentInputs input[name="y_percent"]').value);
-                    formData.append('width_percent', document.querySelector('#percentInputs input[name="width_percent"]').value);
-                    formData.append('height_percent', document.querySelector('#percentInputs input[name="height_percent"]').value);
+                    formData.append('x_percent', document.getElementById('x_percent').value);
+                    formData.append('y_percent', document.getElementById('y_percent').value);
+                    formData.append('width_percent', document.getElementById('width_percent').value);
+                    formData.append('height_percent', document.getElementById('height_percent').value);
                 }
             }
 

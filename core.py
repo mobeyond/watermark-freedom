@@ -1,3 +1,5 @@
+import numpy as np
+import cv2
 import os
 import sys
 from contextlib import contextmanager
@@ -79,29 +81,114 @@ class WatermarkManager:
 
     def embed(self, image_source, message, mask_mode, mask_params=None):
         img_pt, cv_img = self._preprocess_image(image_source)
-        mask, coords = self._create_watermark_mask(img_pt, cv_img, mask_mode, mask_params)
-
+        h, w = img_pt.shape[2:]
+        
+        # Get viewframe region based on mode
+        if mask_mode == 'pixels' and mask_params:
+            # Pixel mode: use provided coordinates
+            x, y = mask_params['x'], mask_params['y']
+            width, height = mask_params['width'], mask_params['height']
+        elif mask_mode == 'percentage' and mask_params:
+            # Percentage mode: convert to pixels
+            x = int(mask_params['x_percent'] * w)
+            y = int(mask_params['y_percent'] * h)
+            width = int(mask_params['width_percent'] * w)
+            height = int(mask_params['height_percent'] * h)
+        else:
+            # Corners mode (default): centered square
+            min_dim = min(h, w)
+            center = (w // 2, h // 2)
+            square_size = int(min_dim * 0.7)
+            x = center[0] - square_size // 2
+            y = center[1] - square_size // 2
+            width = height = square_size
+        
+        coords = {
+            'x': x, 'y': y, 'width': width, 'height': height,
+            'x_percent': x / w, 'y_percent': y / h,
+            'width_percent': width / w, 'height_percent': height / h
+        }
+        
+        # 1. CROP to region (no border yet)
+        cropped = img_pt[:, :, y:y+height, x:x+width]
+        
+        # 2. RESIZE to 256x256 for WAM
+        cropped_256 = torch.nn.functional.interpolate(cropped, size=(256, 256), mode='bilinear', align_corners=False)
+        
+        # 3. EMBED watermark
         wm_msg_tensor = roco_encode_to_binary_tensor(message)
         wm_msg = wm_msg_tensor.unsqueeze(0).to(self.device)
-        outputs = self.wam.embed(img_pt, wm_msg)
+        outputs = self.wam.embed(cropped_256, wm_msg)
         
-        overlay = draw_viewframe_overlay(cv_img)
-        overlay_pil = cv2_to_pil(overlay)
-        overlay_pt = default_transform(overlay_pil).unsqueeze(0).to(self.device)
+        # 4. RESIZE back
+        watermarked_crop = torch.nn.functional.interpolate(outputs['imgs_w'], size=(height, width), mode='bilinear', align_corners=False)
         
-        img_w = outputs['imgs_w'] * mask + overlay_pt * (1 - mask)
+        # 5. PLACE back into original image
+        img_w = img_pt.clone()
+        img_w[:, :, y:y+height, x:x+width] = watermarked_crop
+        
+        # 6. Draw corner brackets (AFTER embedding, visible marker)
+        img_np = unnormalize_img(img_w).squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
+        img_np = (img_np * 255).astype(np.uint8)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        
+        # Draw 4 corner brackets (more visible)
+        corner_length = int(min(width, height) * 0.15)  # 15% of region size
+        line_thickness = 3  # Thicker for visibility
+        color = (255, 255, 255)  # White, full opacity
+        
+        # Top-left corner
+        cv2.line(img_bgr, (x, y), (x + corner_length, y), color, line_thickness)
+        cv2.line(img_bgr, (x, y), (x, y + corner_length), color, line_thickness)
+        
+        # Top-right corner
+        cv2.line(img_bgr, (x + width, y), (x + width - corner_length, y), color, line_thickness)
+        cv2.line(img_bgr, (x + width, y), (x + width, y + corner_length), color, line_thickness)
+        
+        # Bottom-left corner
+        cv2.line(img_bgr, (x, y + height), (x + corner_length, y + height), color, line_thickness)
+        cv2.line(img_bgr, (x, y + height), (x, y + height - corner_length), color, line_thickness)
+        
+        # Bottom-right corner
+        cv2.line(img_bgr, (x + width, y + height), (x + width - corner_length, y + height), color, line_thickness)
+        cv2.line(img_bgr, (x + width, y + height), (x + width, y + height - corner_length), color, line_thickness)
+        
+        # Convert back to tensor
+        overlay_pil = cv2_to_pil(img_bgr)
+        img_w = default_transform(overlay_pil).unsqueeze(0).to(self.device)
         
         binary_message_str = "".join(map(str, wm_msg_tensor.int().tolist()))
         
         return img_w, binary_message_str, coords
 
-    def verify(self, image_source, original_message=None):
-        img_pt, _ = self._preprocess_image(image_source)
+    def verify(self, image_source, original_message=None, viewframe_coords=None):
+        img_pt, cv_img = self._preprocess_image(image_source)
+        h, w = img_pt.shape[2:]
         
-        preds = self.wam.detect(img_pt)["preds"]
+        # Get viewframe region based on params
+        if viewframe_coords:
+            # Use provided coordinates
+            x = int(viewframe_coords.get('x_percent', 0) * w)
+            y = int(viewframe_coords.get('y_percent', 0) * h)
+            width = int(viewframe_coords.get('width_percent', 0) * w)
+            height = int(viewframe_coords.get('height_percent', 0) * h)
+        else:
+            # Default: centered square (same as embed)
+            min_dim = min(h, w)
+            center = (w // 2, h // 2)
+            square_size = int(min_dim * 0.7)
+            x = center[0] - square_size // 2
+            y = center[1] - square_size // 2
+            width = height = square_size
+        
+        # Crop to region
+        cropped = img_pt[:, :, y:y+height, x:x+width]
+        cropped_256 = torch.nn.functional.interpolate(cropped, size=(256, 256), mode='bilinear', align_corners=False)
+        
+        preds = self.wam.detect(cropped_256)["preds"]
+        
         mask_preds = torch.sigmoid(preds[:, 0, :, :])
         bit_preds = preds[:, 1:, :, :]
-        
         pred_message_tensor = msg_predict_inference(bit_preds, mask_preds).cpu().float()
         
         readable_message, is_valid, bitflips = roco_decode_from_binary_tensor(pred_message_tensor[0])
