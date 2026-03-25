@@ -291,3 +291,60 @@ class WatermarkManager:
             results['bit_accuracy'] = (pred_message_tensor[0] == original_binary_tensor).float().mean().item()
             
         return results
+    def verify_tensor(self, img_tensor: torch.Tensor, original_message: str = None) -> dict:
+        """
+        Verify watermark from a tensor (for optimizer use).
+        
+        Args:
+            img_tensor: [B, C, H, W] tensor, values in [0, 1]
+            original_message: Optional original message for comparison
+        
+        Returns:
+            dict with verify results including correct_bits
+        """
+        h, w = img_tensor.shape[2:]
+        
+        # Auto-detect viewframe
+        img_np = img_tensor[0].permute(1, 2, 0).cpu().numpy()
+        img_np = (img_np * 255).astype('uint8')
+        detected = self._detect_viewframe_corners(img_np)
+        
+        if detected:
+            x, y, width, height = detected
+        else:
+            # Fallback: centered square
+            min_dim = min(h, w)
+            center = (w // 2, h // 2)
+            square_size = int(min_dim * 0.7)
+            x = center[0] - square_size // 2
+            y = center[1] - square_size // 2
+            width = height = square_size
+        
+        # Crop to region
+        cropped = img_tensor[:, :, y:y+height, x:x+width]
+        cropped_256 = torch.nn.functional.interpolate(cropped, size=(256, 256), mode='bilinear', align_corners=False)
+        
+        preds = self.wam.detect(cropped_256)["preds"]
+        
+        mask_preds = torch.sigmoid(preds[:, 0, :, :])
+        bit_preds = preds[:, 1:, :, :]
+        pred_message_tensor = msg_predict_inference(bit_preds, mask_preds).cpu().float()
+        
+        readable_message, is_valid, bitflips = roco_decode_from_binary_tensor(pred_message_tensor[0])
+        
+        total_bits = 32
+        correct_bits = total_bits - bitflips if bitflips >= 0 else 0
+        
+        results = {
+            'readable_message': readable_message,
+            'ecc_valid': is_valid,
+            'correct_bits': correct_bits,
+            'bitflips': bitflips,
+        }
+        
+        if original_message:
+            original_binary_tensor = roco_encode_to_binary_tensor(original_message)
+            results['bit_accuracy'] = (pred_message_tensor[0] == original_binary_tensor).float().mean().item()
+            results['correct_bits'] = int((pred_message_tensor[0] == original_binary_tensor).sum().item())
+        
+        return results
