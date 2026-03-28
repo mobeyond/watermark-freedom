@@ -1,23 +1,30 @@
 import numpy as np
 import cv2
 
-def get_inner_square_region(image):
+def get_inner_square_region(image, margin_percent=0.15):
     """
     Takes a square image and returns the coordinates for the inner square region.
-    Returns (top, left, bottom, right) coordinates.
+
+    Args:
+        image: Square input image
+        margin_percent: Margin as fraction of image size (default 0.15 = 15%)
+                       The viewframe will be centered with this margin on all sides.
+
+    Returns:
+        (top, left, bottom, right) coordinates of the inner square region.
     """
     assert image.shape[0] == image.shape[1], "Input image must be square. Use crop_to_centered_square first."
     min_dim = image.shape[0]
-    center = (min_dim // 2, min_dim // 2)
-    radius = min_dim // 2
-    inner_side = int(radius * np.sqrt(2))
-    half_side = inner_side // 2
-    
-    top = center[1] - half_side
-    left = center[0] - half_side
-    bottom = top + inner_side
-    right = left + inner_side
-    
+
+    # Calculate margin in pixels
+    margin = int(min_dim * margin_percent)
+
+    # Centered square with specified margin
+    top = margin
+    left = margin
+    bottom = min_dim - margin
+    right = min_dim - margin
+
     return (top, left, bottom, right)
 
 def get_corner_color(image, pt, length):
@@ -38,14 +45,25 @@ def draw_alpha_line(img, pt1, pt2, color, alpha, thickness):
     mask = line_img[..., 3] > 0
     img[mask] = line_img[mask]
 
-def draw_viewframe_overlay(image, corner_length_ratio=0.1, transparency=0.5):
+def draw_viewframe_overlay(image, corner_length_ratio=0.1, transparency=0.5, margin_percent=0.15):
     """
     Takes a square image and draws the transparent viewframe overlay.
     Returns the overlayed image.
+
+    Args:
+        image: Square input image
+        corner_length_ratio: Corner bracket length as fraction of viewframe size
+        transparency: Transparency of overlay (0-1)
+        margin_percent: Margin as fraction of image size (default 0.15 = 15%)
     """
     assert image.shape[0] == image.shape[1], "Input image must be square. Use crop_to_centered_square first."
     square_img = image.copy()
     min_dim = square_img.shape[0]
+
+    # Calculate margin
+    margin = int(min_dim * margin_percent)
+    viewframe_size = min_dim - 2 * margin
+    center = (min_dim // 2, min_dim // 2)
 
     # Control the width of the 4 corners to be proportional to the pixel size of the image
     if min_dim < 80:
@@ -53,17 +71,13 @@ def draw_viewframe_overlay(image, corner_length_ratio=0.1, transparency=0.5):
     else:
         line_thickness = max(2, int(min_dim * 0.02))
 
-    center = (min_dim // 2, min_dim // 2)
-    radius = min_dim // 2
-    inner_side = int(radius * np.sqrt(2))
-    half_side = inner_side // 2
-    corner_length = int(inner_side * corner_length_ratio)
-    
-    # Coordinates of the inner square's corners
-    tl = (center[0] - half_side, center[1] - half_side)
-    tr = (center[0] + half_side, center[1] - half_side)
-    bl = (center[0] - half_side, center[1] + half_side)
-    br = (center[0] + half_side, center[1] + half_side)
+    corner_length = int(viewframe_size * corner_length_ratio)
+
+    # Coordinates of the viewframe's corners
+    tl = (center[0] - viewframe_size // 2, center[1] - viewframe_size // 2)
+    tr = (center[0] + viewframe_size // 2, center[1] - viewframe_size // 2)
+    bl = (center[0] - viewframe_size // 2, center[1] + viewframe_size // 2)
+    br = (center[0] + viewframe_size // 2, center[1] + viewframe_size // 2)
     
     # Create overlay with alpha channel
     overlay_rgba = np.zeros((min_dim, min_dim, 4), dtype=np.uint8)

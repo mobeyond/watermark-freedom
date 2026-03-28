@@ -38,7 +38,8 @@ Relation/Structure Diagram:
 
 The app.py file is the main entry point for the Flask application. It uses the core.py file for core functions and the watermark_utils.py file for utility functions. The core.py file uses the roco_core.py and roco_ecc.py files for ROCO-related operations, the viewframe.py file for drawing viewframe overlays, and the watermark_utils.py file for utility functions. The mark.py and verify.py files use the core.py file for their respective functionalities and the watermark_utils.py file for utility functions.
 
-
+ATTENTION:
+Download the .pth modelfile from original project on github or MIT source directly to run this tool.
 
 
 ## Acknowledgments

@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import os
 import sys
+from PIL import Image
 from contextlib import contextmanager
 import torch
 from torchvision.utils import save_image
@@ -14,6 +15,7 @@ from watermark_utils import (
     roco_encode_to_binary_tensor, roco_decode_from_binary_tensor
 )
 from viewframe import get_inner_square_region, draw_viewframe_overlay
+from viewframe_detector import ViewframeDetector
 
 @contextmanager
 def suppress_stdout():
@@ -26,16 +28,23 @@ def suppress_stdout():
             sys.stdout = old_stdout
 
 class WatermarkManager:
-    def __init__(self, device=None):
+    def __init__(self, device=None, viewframe_detector=None):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+
         exp_dir = "checkpoints"
         json_path = os.path.join(exp_dir, "params.json")
         ckpt_path = os.path.join(exp_dir, 'wam_mit.pth')
-        
+
         with suppress_stdout():
             self.wam = load_model_from_checkpoint(json_path, ckpt_path).to(self.device).eval()
         print(f"Model loaded successfully from {ckpt_path}")
+
+        # Initialize viewframe detector (can be customized or replaced)
+        self.viewframe_detector = viewframe_detector or ViewframeDetector(
+            line_thickness=3,
+            brightness_threshold=200,  # Lower threshold for robust detection with 95% opacity brackets
+            min_region_area=100
+        )
 
     def _preprocess_image(self, source):
         img = load_image(source)
@@ -45,13 +54,13 @@ class WatermarkManager:
         img_pt = default_transform(img).unsqueeze(0).to(self.device)
         return img_pt, cv_img
 
-    def _create_watermark_mask(self, img_pt, cv_img, mode, params=None):
+    def _create_watermark_mask(self, img_pt, cv_img, mode, params=None, margin_percent=0.15):
         h, w = img_pt.shape[2:]
         mask = None
         coords = {}
 
         if mode == 'corners':
-            crop_top, crop_left, crop_bottom, crop_right = get_inner_square_region(cv_img)
+            crop_top, crop_left, crop_bottom, crop_right = get_inner_square_region(cv_img, margin_percent)
             x, y, width, height = crop_left, crop_top, crop_right - crop_left, crop_bottom - crop_top
             mask = create_mask_from_coords(img_pt, x, y, width, height)
             coords = {'x': x, 'y': y, 'width': width, 'height': height}
@@ -79,10 +88,10 @@ class WatermarkManager:
 
         return mask, coords
 
-    def embed(self, image_source, message, mask_mode, mask_params=None):
+    def embed(self, image_source, message, mask_mode, mask_params=None, margin_percent=0.15):
         img_pt, cv_img = self._preprocess_image(image_source)
         h, w = img_pt.shape[2:]
-        
+
         # Get viewframe region based on mode
         if mask_mode == 'pixels' and mask_params:
             # Pixel mode: use provided coordinates
@@ -95,149 +104,106 @@ class WatermarkManager:
             width = int(mask_params['width_percent'] * w)
             height = int(mask_params['height_percent'] * h)
         else:
-            # Corners mode (default): centered square
-            min_dim = min(h, w)
-            center = (w // 2, h // 2)
-            square_size = int(min_dim * 0.7)
-            x = center[0] - square_size // 2
-            y = center[1] - square_size // 2
-            width = height = square_size
-        
+            # Corners mode (default): centered square with specified margin
+            margin = int(min(w, h) * margin_percent)
+            x = margin
+            y = margin
+            width = w - 2 * margin
+            height = h - 2 * margin
+
         coords = {
             'x': x, 'y': y, 'width': width, 'height': height,
             'x_percent': x / w, 'y_percent': y / h,
             'width_percent': width / w, 'height_percent': height / h
         }
-        
+
         # 1. CROP to region (no border yet)
         cropped = img_pt[:, :, y:y+height, x:x+width]
-        
-        # 2. RESIZE to 256x256 for WAM
+
+        # 2. RESIZE to 256x256 for WAM (model was trained on this size)
         cropped_256 = torch.nn.functional.interpolate(cropped, size=(256, 256), mode='bilinear', align_corners=False)
-        
+
         # 3. EMBED watermark
         wm_msg_tensor = roco_encode_to_binary_tensor(message)
         wm_msg = wm_msg_tensor.unsqueeze(0).to(self.device)
         outputs = self.wam.embed(cropped_256, wm_msg)
-        
-        # 4. RESIZE back
+
+        # 4. RESIZE back to viewframe size
         watermarked_crop = torch.nn.functional.interpolate(outputs['imgs_w'], size=(height, width), mode='bilinear', align_corners=False)
         
         # 5. PLACE back into original image
         img_w = img_pt.clone()
         img_w[:, :, y:y+height, x:x+width] = watermarked_crop
         
-        # 6. Draw corner brackets (AFTER embedding, visible marker)
+        # 6. Draw corner brackets with semi-transparent blending overlay
         img_np = unnormalize_img(img_w).squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
         img_np = (img_np * 255).astype(np.uint8)
-        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        
-        # Draw 4 corner brackets (more visible)
+        img_rgb = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+        # Store original for alpha blending
+        original_bgr = img_rgb.copy().astype(np.float32)
+
+        # Draw 4 corner brackets with semi-transparent blending effect
+        # High opacity (0.95) ensures reliable detection while maintaining aesthetic blending
         corner_length = int(min(width, height) * 0.15)  # 15% of region size
-        line_thickness = 3  # Thicker for visibility
-        color = (255, 255, 255)  # White, full opacity
-        
+        line_thickness = max(2, int(min(width, height) * 0.012))  # ~1.2% of region size
+        opacity = 0.95  # 95% opacity - bright enough for reliable detection
+
+        # Create a mask for the corner brackets
+        mask = np.zeros_like(img_rgb, dtype=np.uint8)
+
+        # Draw all 8 L-shaped corner brackets on the mask
         # Top-left corner
-        cv2.line(img_bgr, (x, y), (x + corner_length, y), color, line_thickness)
-        cv2.line(img_bgr, (x, y), (x, y + corner_length), color, line_thickness)
-        
+        cv2.line(mask, (x, y), (x + corner_length, y), 255, line_thickness)
+        cv2.line(mask, (x, y), (x, y + corner_length), 255, line_thickness)
         # Top-right corner
-        cv2.line(img_bgr, (x + width, y), (x + width - corner_length, y), color, line_thickness)
-        cv2.line(img_bgr, (x + width, y), (x + width, y + corner_length), color, line_thickness)
-        
+        cv2.line(mask, (x + width, y), (x + width - corner_length, y), 255, line_thickness)
+        cv2.line(mask, (x + width, y), (x + width, y + corner_length), 255, line_thickness)
         # Bottom-left corner
-        cv2.line(img_bgr, (x, y + height), (x + corner_length, y + height), color, line_thickness)
-        cv2.line(img_bgr, (x, y + height), (x, y + height - corner_length), color, line_thickness)
-        
+        cv2.line(mask, (x, y + height), (x + corner_length, y + height), 255, line_thickness)
+        cv2.line(mask, (x, y + height), (x, y + height - corner_length), 255, line_thickness)
         # Bottom-right corner
-        cv2.line(img_bgr, (x + width, y + height), (x + width - corner_length, y + height), color, line_thickness)
-        cv2.line(img_bgr, (x + width, y + height), (x + width, y + height - corner_length), color, line_thickness)
-        
-        # Convert back to tensor
-        overlay_pil = cv2_to_pil(img_bgr)
+        cv2.line(mask, (x + width, y + height), (x + width - corner_length, y + height), 255, line_thickness)
+        cv2.line(mask, (x + width, y + height), (x + width, y + height - corner_length), 255, line_thickness)
+
+        # Create white brackets image for blending
+        white_brackets = np.ones_like(img_rgb) * 255
+
+        # Alpha blend: result = original * (1 - opacity * mask) + white * opacity * mask
+        mask_float = mask.astype(np.float32)[:, :, 0:1] / 255.0
+        blended = original_bgr * (1 - opacity * mask_float) + white_brackets.astype(np.float32) * opacity * mask_float
+        img_rgb_result = np.clip(blended, 0, 255).astype(np.uint8)
+
+        # Convert back to RGB tensor
+        img_rgb_result = cv2.cvtColor(img_rgb_result, cv2.COLOR_BGR2RGB)
+        overlay_pil = cv2_to_pil(img_rgb_result)
         img_w = default_transform(overlay_pil).unsqueeze(0).to(self.device)
         
         binary_message_str = "".join(map(str, wm_msg_tensor.int().tolist()))
         
         return img_w, binary_message_str, coords
 
-    def _detect_viewframe_corners(self, cv_img):
+    def _detect_viewframe_corners(self, cv_img, method='direct'):
         """Auto-detect viewframe corners from the image.
-        
+
         The viewframe has 4 corner brackets (L-shaped white lines, value 255).
         Returns: (x, y, width, height) of the viewframe region, or None if not found.
         """
-        import cv2
-        
-        h, w = cv_img.shape[:2]
-        
-        # Convert to grayscale
-        if len(cv_img.shape) == 3:
-            gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = cv_img
-        
-        # Find exactly 255 pixels (the corner brackets are pure white)
-        bright_mask = (gray == 255).astype(np.uint8) * 255
-        
-        # Find the bounding box of all 255 pixels
-        rows, cols = np.where(bright_mask > 0)
-        
-        if len(rows) == 0:
-            return None
-        
-        # The 255 pixels form 4 L-shaped corner brackets
-        # The corner brackets are drawn with line_thickness=3
-        # So the actual corner position is offset by ~1 pixel from the edge
-        
-        # Find the outer edge of each corner bracket
-        # Top-left: outer edge is at the smallest x and y
-        tl_mask = (rows < h//2) & (cols < w//2)
-        if tl_mask.sum() == 0:
-            return None
-        tl_x = cols[tl_mask].min()  # Leftmost 255 pixel
-        tl_y = rows[tl_mask].min()  # Topmost 255 pixel
-        
-        # Top-right: outer edge is at the largest x, smallest y
-        tr_mask = (rows < h//2) & (cols > w//2)
-        if tr_mask.sum() == 0:
-            return None
-        tr_x = cols[tr_mask].max()  # Rightmost 255 pixel
-        tr_y = rows[tr_mask].min()  # Topmost 255 pixel
-        
-        # Bottom-left: outer edge is at the smallest x, largest y
-        bl_mask = (rows > h//2) & (cols < w//2)
-        if bl_mask.sum() == 0:
-            return None
-        bl_x = cols[bl_mask].min()  # Leftmost 255 pixel
-        bl_y = rows[bl_mask].max()  # Bottommost 255 pixel
-        
-        # Bottom-right: outer edge is at the largest x and y
-        br_mask = (rows > h//2) & (cols > w//2)
-        if br_mask.sum() == 0:
-            return None
-        br_x = cols[br_mask].max()  # Rightmost 255 pixel
-        br_y = rows[br_mask].max()  # Bottommost 255 pixel
-        
-        # The viewframe region is defined by the outer corners
-        # Adjust for line thickness (line is centered on the coordinate)
-        # For thickness=3, the line extends ~1 pixel on each side
-        line_thickness_offset = 2
-        
-        x = tl_x + line_thickness_offset
-        y = tl_y + line_thickness_offset
-        width = tr_x - tl_x - 2 * line_thickness_offset
-        height = bl_y - tl_y - 2 * line_thickness_offset
-        
-        return x, y, width, height
+        # Use the new ViewframeDetector
+        result = self.viewframe_detector.detect(cv_img, method=method)
+
+        if result:
+            return result['x'], result['y'], result['width'], result['height']
+
+        return None
 
     def verify(self, image_source, original_message=None, viewframe_coords=None):
         img_pt, cv_img = self._preprocess_image(image_source)
         h, w = img_pt.shape[2:]
-        
+
         # Auto-detect viewframe corners from the image
         detected = self._detect_viewframe_corners(cv_img)
-        
+
         if detected:
             x, y, width, height = detected
         else:
@@ -248,11 +214,11 @@ class WatermarkManager:
             x = center[0] - square_size // 2
             y = center[1] - square_size // 2
             width = height = square_size
-        
+
         # Crop to region
         cropped = img_pt[:, :, y:y+height, x:x+width]
         cropped_256 = torch.nn.functional.interpolate(cropped, size=(256, 256), mode='bilinear', align_corners=False)
-        
+
         preds = self.wam.detect(cropped_256)["preds"]
         
         mask_preds = torch.sigmoid(preds[:, 0, :, :])
@@ -313,13 +279,17 @@ class WatermarkManager:
             x, y, width, height = detected
         else:
             # Fallback: centered square
+            # Ensure minimum viewframe size of 180x180 for reliable watermarking
             min_dim = min(h, w)
+            min_viewframe_size = 180
+            effective_ratio = max(0.7, min_viewframe_size / min_dim)
+            square_size = int(min_dim * effective_ratio)
             center = (w // 2, h // 2)
-            square_size = int(min_dim * 0.7)
             x = center[0] - square_size // 2
             y = center[1] - square_size // 2
             width = height = square_size
-        
+
+
         # Crop to region
         cropped = img_tensor[:, :, y:y+height, x:x+width]
         cropped_256 = torch.nn.functional.interpolate(cropped, size=(256, 256), mode='bilinear', align_corners=False)
