@@ -1,109 +1,173 @@
 import numpy as np
 import cv2
 
-def get_inner_square_region(image, margin_percent=0.15):
-    """
-    Takes a square image and returns the coordinates for the inner square region.
 
-    Args:
-        image: Square input image
-        margin_percent: Margin as fraction of image size (default 0.15 = 15%)
-                       The viewframe will be centered with this margin on all sides.
+# Special pixel values for brackets - unlikely in natural images
+BRACKET_BRIGHT = 254
+BRACKET_DARK = 1
 
-    Returns:
-        (top, left, bottom, right) coordinates of the inner square region.
-    """
-    assert image.shape[0] == image.shape[1], "Input image must be square. Use crop_to_centered_square first."
-    min_dim = image.shape[0]
+# Supported bracket overlay methods
+BRACKET_METHOD_DISTINCTIVE = "distinctive"  # Uses pixel values 254/1
+BRACKET_METHOD_ALPHA = "alpha"  # Uses alpha blending
 
-    # Calculate margin in pixels
-    margin = int(min_dim * margin_percent)
+SUPPORTED_BRACKET_METHODS = [BRACKET_METHOD_DISTINCTIVE, BRACKET_METHOD_ALPHA]
+DEFAULT_BRACKET_METHOD = BRACKET_METHOD_DISTINCTIVE
 
-    # Centered square with specified margin
-    top = margin
-    left = margin
-    bottom = min_dim - margin
-    right = min_dim - margin
-
-    return (top, left, bottom, right)
 
 def get_corner_color(image, pt, length):
-    """Get the appropriate color for a corner based on the underlying image content"""
+    """Get the appropriate color for a corner based on the underlying image content."""
     x0 = max(pt[0], 0)
     y0 = max(pt[1], 0)
-    x1 = min(pt[0]+length, image.shape[1])
-    y1 = min(pt[1]+length, image.shape[0])
+    x1 = min(pt[0] + length, image.shape[1])
+    y1 = min(pt[1] + length, image.shape[0])
     region = image[y0:y1, x0:x1]
     gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
     mean = np.mean(gray)
-    return (0,0,0) if mean > 128 else (255,255,255)
+    return (
+        (BRACKET_DARK, BRACKET_DARK, BRACKET_DARK)
+        if mean > 128
+        else (BRACKET_BRIGHT, BRACKET_BRIGHT, BRACKET_BRIGHT)
+    )
 
-def draw_alpha_line(img, pt1, pt2, color, alpha, thickness):
-    """Draw a line with alpha transparency"""
-    line_img = np.zeros_like(img)
-    cv2.line(line_img, pt1, pt2, color + (int(alpha * 255),), thickness)
-    mask = line_img[..., 3] > 0
-    img[mask] = line_img[mask]
 
-def draw_viewframe_overlay(image, corner_length_ratio=0.1, transparency=0.5, margin_percent=0.15):
-    """
-    Takes a square image and draws the transparent viewframe overlay.
-    Returns the overlayed image.
+def draw_transparent_corner_brackets(
+    img, x, y, width, height, corner_length, line_thickness, alpha=0.7
+):
+    """Draw corner brackets with distinctive pixel values.
+
+    Uses pixel values 1 (black) and 254 (white) which are distinctive.
+    The 'alpha' parameter is kept for API compatibility but lines are solid
+    for reliable detection.
 
     Args:
-        image: Square input image
-        corner_length_ratio: Corner bracket length as fraction of viewframe size
-        transparency: Transparency of overlay (0-1)
-        margin_percent: Margin as fraction of image size (default 0.15 = 15%)
+        img: BGR image (modified in place)
+        x, y: Top-left corner of viewframe
+        width, height: Viewframe dimensions
+        corner_length: Length of each bracket arm
+        line_thickness: Line thickness
+        alpha: Opacity (kept for compatibility, currently draws solid)
     """
-    assert image.shape[0] == image.shape[1], "Input image must be square. Use crop_to_centered_square first."
-    square_img = image.copy()
-    min_dim = square_img.shape[0]
+    # Top-left corner
+    color = get_corner_color(img, (x, y), corner_length)
+    cv2.line(img, (x, y), (x + corner_length, y), color, line_thickness)
+    cv2.line(img, (x, y), (x, y + corner_length), color, line_thickness)
 
-    # Calculate margin
-    margin = int(min_dim * margin_percent)
-    viewframe_size = min_dim - 2 * margin
-    center = (min_dim // 2, min_dim // 2)
+    # Top-right corner
+    color = get_corner_color(img, (x + width - corner_length, y), corner_length)
+    cv2.line(img, (x + width, y), (x + width - corner_length, y), color, line_thickness)
+    cv2.line(img, (x + width, y), (x + width, y + corner_length), color, line_thickness)
 
-    # Control the width of the 4 corners to be proportional to the pixel size of the image
-    if min_dim < 80:
-        line_thickness = 2
+    # Bottom-left corner
+    color = get_corner_color(img, (x, y + height - corner_length), corner_length)
+    cv2.line(
+        img, (x, y + height), (x + corner_length, y + height), color, line_thickness
+    )
+    cv2.line(
+        img, (x, y + height), (x, y + height - corner_length), color, line_thickness
+    )
+
+    # Bottom-right corner
+    color = get_corner_color(
+        img, (x + width - corner_length, y + height - corner_length), corner_length
+    )
+    cv2.line(
+        img,
+        (x + width, y + height),
+        (x + width - corner_length, y + height),
+        color,
+        line_thickness,
+    )
+    cv2.line(
+        img,
+        (x + width, y + height),
+        (x + width, y + height - corner_length),
+        color,
+        line_thickness,
+    )
+
+
+def draw_alpha_blend_corner_brackets(
+    img, x, y, width, height, corner_length, line_thickness, alpha=0.7
+):
+    """Draw corner brackets with alpha blending (subtle overlay)."""
+    overlay = img.copy()
+
+    color = get_corner_color(img, (x, y), corner_length)
+    cv2.line(overlay, (x, y), (x + corner_length, y), color, line_thickness)
+    cv2.line(overlay, (x, y), (x, y + corner_length), color, line_thickness)
+
+    color = get_corner_color(img, (x + width - corner_length, y), corner_length)
+    cv2.line(
+        overlay, (x + width, y), (x + width - corner_length, y), color, line_thickness
+    )
+    cv2.line(
+        overlay, (x + width, y), (x + width, y + corner_length), color, line_thickness
+    )
+
+    color = get_corner_color(img, (x, y + height - corner_length), corner_length)
+    cv2.line(
+        overlay, (x, y + height), (x + corner_length, y + height), color, line_thickness
+    )
+    cv2.line(
+        overlay, (x, y + height), (x, y + height - corner_length), color, line_thickness
+    )
+
+    color = get_corner_color(
+        img, (x + width - corner_length, y + height - corner_length), corner_length
+    )
+    cv2.line(
+        overlay,
+        (x + width, y + height),
+        (x + width - corner_length, y + height),
+        color,
+        line_thickness,
+    )
+    cv2.line(
+        overlay,
+        (x + width, y + height),
+        (x + width, y + height - corner_length),
+        color,
+        line_thickness,
+    )
+
+    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+
+
+def draw_corner_brackets(
+    img,
+    x,
+    y,
+    width,
+    height,
+    corner_length,
+    line_thickness,
+    method=DEFAULT_BRACKET_METHOD,
+    alpha=0.7,
+):
+    """Draw corner brackets using the specified method.
+
+    Args:
+        img: BGR image (modified in place)
+        x, y: Top-left corner of viewframe
+        width, height: Viewframe dimensions
+        corner_length: Length of each bracket arm
+        line_thickness: Line thickness
+        method: Bracket drawing method ('distinctive' or 'alpha')
+        alpha: Opacity for alpha blending method (0.0-1.0)
+
+    Raises:
+        ValueError: If method is not supported
+    """
+    if method == BRACKET_METHOD_DISTINCTIVE:
+        draw_transparent_corner_brackets(
+            img, x, y, width, height, corner_length, line_thickness, alpha=1.0
+        )
+    elif method == BRACKET_METHOD_ALPHA:
+        draw_alpha_blend_corner_brackets(
+            img, x, y, width, height, corner_length, line_thickness, alpha=alpha
+        )
     else:
-        line_thickness = max(2, int(min_dim * 0.02))
-
-    corner_length = int(viewframe_size * corner_length_ratio)
-
-    # Coordinates of the viewframe's corners
-    tl = (center[0] - viewframe_size // 2, center[1] - viewframe_size // 2)
-    tr = (center[0] + viewframe_size // 2, center[1] - viewframe_size // 2)
-    bl = (center[0] - viewframe_size // 2, center[1] + viewframe_size // 2)
-    br = (center[0] + viewframe_size // 2, center[1] + viewframe_size // 2)
-    
-    # Create overlay with alpha channel
-    overlay_rgba = np.zeros((min_dim, min_dim, 4), dtype=np.uint8)
-    
-    # Get colors for each corner
-    color_tl = get_corner_color(square_img, tl, corner_length)
-    color_tr = get_corner_color(square_img, (tr[0] - corner_length, tr[1]), corner_length)
-    color_bl = get_corner_color(square_img, (bl[0], bl[1] - corner_length), corner_length)
-    color_br = get_corner_color(square_img, (br[0] - corner_length, br[1] - corner_length), corner_length)
-    
-    # Draw the corner lines
-    alpha = transparency
-    draw_alpha_line(overlay_rgba, tl, (tl[0] + corner_length, tl[1]), color_tl, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, tl, (tl[0], tl[1] + corner_length), color_tl, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, tr, (tr[0] - corner_length, tr[1]), color_tr, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, tr, (tr[0], tr[1] + corner_length), color_tr, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, bl, (bl[0] + corner_length, bl[1]), color_bl, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, bl, (bl[0], bl[1] - corner_length), color_bl, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, br, (br[0] - corner_length, br[1]), color_br, alpha, line_thickness)
-    draw_alpha_line(overlay_rgba, br, (br[0], br[1] - corner_length), color_br, alpha, line_thickness)
-    
-    # Blend the overlay with the original image
-    square_img_bgra = cv2.cvtColor(square_img, cv2.COLOR_BGR2BGRA)
-    overlay_alpha = overlay_rgba[..., 3:4] / 255.0
-    blended_bgra = (overlay_rgba[..., :3] * overlay_alpha +
-                    square_img_bgra[..., :3] * (1 - overlay_alpha)).astype(np.uint8)
-    overlayed_img = cv2.cvtColor(blended_bgra, cv2.COLOR_BGRA2BGR)
-    
-    return overlayed_img 
+        raise ValueError(
+            f"Unsupported bracket method: {method}. "
+            f"Supported: {SUPPORTED_BRACKET_METHODS}"
+        )
