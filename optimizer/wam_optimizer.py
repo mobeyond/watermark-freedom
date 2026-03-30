@@ -12,31 +12,31 @@ import sys
 import os
 import json
 import math
-import copy
 import time
 import tempfile
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 
-# Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import numpy as np
 from PIL import Image
 
-# Import attacks
 from attacks import crop, resize, rotate, flip, jpeg, noise, blur, brightness, contrast, saturation
-
-# Import watermark modules
 from core import WatermarkManager
 from roco_core import decode_from_bits
 from roco_ecc import decode_with_ecc
 from watermark_anything.data.metrics import msg_predict_inference
 
 
-# ─── Z-Score Calculation ─────────────────────────────────────────────────────
+# Constants
+TOTAL_BITS = 32
+DEFAULT_NUM_IMAGES = 20
+DEFAULT_LOG_FILE = 'optimizer/improvement_log.json'
 
-def compute_z_score(correct_bits: int, total_bits: int = 32) -> float:
+
+def compute_z_score(correct_bits: int, total_bits: int = TOTAL_BITS) -> float:
     """Compute z-score for bit accuracy."""
     expected = total_bits / 2
     std = math.sqrt(total_bits / 4)
@@ -45,8 +45,7 @@ def compute_z_score(correct_bits: int, total_bits: int = 32) -> float:
     return (correct_bits - expected) / std
 
 
-# ─── Attack Suite ───────────────────────────────────────────────────────────
-
+# Attack suite: (name, function)
 ATTACKS = [
     ('clean', lambda a: a),
     ('jpeg_75', lambda a: jpeg(a, 75)),
@@ -60,8 +59,6 @@ ATTACKS = [
 ]
 
 
-# ─── WAM Variant ────────────────────────────────────────────────────────────
-
 class WAMVariant:
     """Self-contained WAM configuration with tunable parameters."""
     
@@ -74,17 +71,17 @@ class WAMVariant:
         self.scaling_w = scaling_w
         self.scaling_i = scaling_i
         self.label = label
-        self._original_sw = None
-        self._original_si = None
+        self._original_sw: Optional[float] = None
+        self._original_si: Optional[float] = None
     
-    def apply(self, manager: WatermarkManager):
+    def apply(self, manager: WatermarkManager) -> None:
         """Apply this variant's parameters to the WatermarkManager."""
         self._original_sw = manager.wam.scaling_w
         self._original_si = manager.wam.scaling_i
         manager.wam.scaling_w = self.scaling_w
         manager.wam.scaling_i = self.scaling_i
     
-    def restore(self, manager: WatermarkManager):
+    def restore(self, manager: WatermarkManager) -> None:
         """Restore original parameters."""
         if self._original_sw is not None:
             manager.wam.scaling_w = self._original_sw
@@ -99,37 +96,32 @@ class WAMVariant:
         }
 
 
-# ─── WAM Optimizer ──────────────────────────────────────────────────────────
-
 class WAMOptimizer:
     """Self-improving optimizer for WAM watermarking."""
     
     def __init__(
         self,
-        num_test_images: int = 20,
-        log_file: str = 'optimizer/improvement_log.json',
+        num_test_images: int = DEFAULT_NUM_IMAGES,
+        log_file: str = DEFAULT_LOG_FILE,
     ):
         self.manager = WatermarkManager()
         self.log_file = Path(log_file)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         
-        # Generate test images and save to temp files
         self.test_image_files = self._generate_test_images(num_test_images)
         self.test_messages = ['ABC', 'XYZ', 'QWE', 'RST', 'UVW']
-        
-        # Results log
-        self.results = []
+        self.results: List[Dict[str, Any]] = []
         
         # Accept thresholds
         self.accept_delta = 0.10
         self.accept_wins = 2
         
-        # Best configuration so far
+        # Best configuration
         self.best_variant = WAMVariant(label="baseline")
         self.best_z = 0.0
-        self.best_median_z = {}
+        self.best_median_z: Dict[str, float] = {}
     
-    def _generate_test_images(self, num_images: int) -> list:
+    def _generate_test_images(self, num_images: int) -> List[str]:
         """Generate random test images and save to temp files."""
         temp_dir = tempfile.mkdtemp(prefix='wam_opt_')
         files = []
@@ -144,40 +136,44 @@ class WAMOptimizer:
         
         return files
     
+    def _benchmark_single_image(
+        self, 
+        img_file: str, 
+        message: str
+    ) -> Dict[str, List[float]]:
+        """Benchmark a single image against all attacks."""
+        attack_z_scores: Dict[str, List[float]] = {name: [] for name, _ in ATTACKS}
+        
+        img_tensor, _, coords = self.manager.embed(img_file, message, 'corners')
+        
+        for attack_name, attack_fn in ATTACKS:
+            attacked = attack_fn(img_tensor)
+            result = self.manager.verify_tensor(attacked, message)
+            z = compute_z_score(result['correct_bits'], TOTAL_BITS)
+            attack_z_scores[attack_name].append(z)
+        
+        return attack_z_scores
+    
     def benchmark_variant(self, variant: WAMVariant) -> dict:
         """Benchmark a variant against all attacks."""
         start_time = time.time()
-        attack_z_scores = {name: [] for name, _ in ATTACKS}
+        attack_z_scores: Dict[str, List[float]] = {name: [] for name, _ in ATTACKS}
         
         variant.apply(self.manager)
         
         try:
             for img_idx, img_file in enumerate(self.test_image_files):
                 message = self.test_messages[img_idx % len(self.test_messages)]
+                img_z_scores = self._benchmark_single_image(img_file, message)
                 
-                # Embed
-                img_tensor, _, coords = self.manager.embed(img_file, message, 'corners')
-                
-                # Test each attack
-                for attack_name, attack_fn in ATTACKS:
-                    # Apply attack
-                    attacked = attack_fn(img_tensor)
-                    
-                    # Verify
-                    result = self.manager.verify_tensor(attacked, message)
-                    z = compute_z_score(result['correct_bits'], 32)
-                    attack_z_scores[attack_name].append(z)
+                for attack_name, z_list in img_z_scores.items():
+                    attack_z_scores[attack_name].extend(z_list)
         finally:
             variant.restore(self.manager)
         
         # Compute median z-scores per attack
-        median_z = {}
-        for attack_name, z_scores in attack_z_scores.items():
-            median_z[attack_name] = float(np.median(z_scores))
-        
-        # Overall median
-        all_medians = list(median_z.values())
-        overall_median = float(np.median(all_medians))
+        median_z = {name: float(np.median(z_scores)) for name, z_scores in attack_z_scores.items()}
+        overall_median = float(np.median(list(median_z.values())))
         
         elapsed = time.time() - start_time
         
@@ -188,7 +184,7 @@ class WAMOptimizer:
             'elapsed_seconds': elapsed,
         }
     
-    def _initial_candidates(self) -> list:
+    def _initial_candidates(self) -> List[WAMVariant]:
         """Generate initial candidate variants."""
         return [
             WAMVariant(label="baseline", scaling_w=2.0, scaling_i=1.0),
@@ -203,7 +199,7 @@ class WAMOptimizer:
             WAMVariant(label="sw_05", scaling_w=0.5, scaling_i=1.0),
         ]
     
-    def _continuation_candidates(self, winner: WAMVariant) -> list:
+    def _continuation_candidates(self, winner: WAMVariant) -> List[WAMVariant]:
         """Generate continuation candidates from a winner."""
         candidates = []
         
@@ -229,7 +225,31 @@ class WAMOptimizer:
         
         return candidates
     
-    def run(self, rounds: int = 10, generations: int = 5):
+    def _evaluate_variant(self, variant: WAMVariant, round_num: int, total: int) -> bool:
+        """Evaluate a variant and return True if accepted."""
+        print(f"\n  Round {round_num}/{total}: {variant.label}")
+        result = self.benchmark_variant(variant)
+        
+        delta = result['overall_median_z'] - self.best_z
+        wins = sum(1 for k, v in result['median_z'].items() 
+                  if v > self.best_median_z.get(k, 0))
+        
+        # Accept if improves by delta threshold AND wins on enough attacks
+        # Or accept first variant if no baseline yet
+        accept = (delta >= self.accept_delta and wins >= self.accept_wins) or self.best_z == 0
+        
+        if accept:
+            self.best_z = result['overall_median_z']
+            self.best_variant = variant
+            self.best_median_z = result['median_z']
+            print(f"    ✓ ACCEPTED: z={result['overall_median_z']:.2f} (delta={delta:+.2f}, wins={wins})")
+        else:
+            print(f"    ✗ REJECTED: z={result['overall_median_z']:.2f} (delta={delta:+.2f}, wins={wins})")
+        
+        self.results.append(result)
+        return accept
+    
+    def run(self, rounds: int = 10, generations: int = 5) -> WAMVariant:
         """Run the optimization loop."""
         print(f"WAM Optimizer - {len(self.test_image_files)} test images")
         print(f"Testing {len(ATTACKS)} attack types")
@@ -240,24 +260,7 @@ class WAMOptimizer:
         candidates = self._initial_candidates()[:rounds]
         
         for i, variant in enumerate(candidates):
-            print(f"\n  Round {i+1}/{rounds}: {variant.label}")
-            result = self.benchmark_variant(variant)
-            
-            delta = result['overall_median_z'] - self.best_z
-            wins = sum(1 for k, v in result['median_z'].items() 
-                      if v > self.best_median_z.get(k, 0))
-            
-            accept = delta >= self.accept_delta and wins >= self.accept_wins
-            
-            if accept or self.best_z == 0:
-                self.best_z = result['overall_median_z']
-                self.best_variant = variant
-                self.best_median_z = result['median_z']
-                print(f"    ✓ ACCEPTED: z={result['overall_median_z']:.2f} (delta={delta:+.2f}, wins={wins})")
-            else:
-                print(f"    ✗ REJECTED: z={result['overall_median_z']:.2f} (delta={delta:+.2f}, wins={wins})")
-            
-            self.results.append(result)
+            self._evaluate_variant(variant, i + 1, rounds)
         
         # Continuation generations
         for gen in range(generations):
@@ -265,27 +268,10 @@ class WAMOptimizer:
             candidates = self._continuation_candidates(self.best_variant)
             
             for i, variant in enumerate(candidates):
-                print(f"\n  G{gen+1} Round {i+1}/{len(candidates)}: {variant.label}")
-                result = self.benchmark_variant(variant)
-                
-                delta = result['overall_median_z'] - self.best_z
-                wins = sum(1 for k, v in result['median_z'].items() 
-                          if v > self.best_median_z.get(k, 0))
-                
-                accept = delta >= self.accept_delta and wins >= self.accept_wins
-                
-                if accept:
-                    self.best_z = result['overall_median_z']
-                    self.best_variant = variant
-                    self.best_median_z = result['median_z']
-                    print(f"    ✓ ACCEPTED: z={result['overall_median_z']:.2f} (delta={delta:+.2f}, wins={wins})")
-                else:
-                    print(f"    ✗ REJECTED: z={result['overall_median_z']:.2f} (delta={delta:+.2f}, wins={wins})")
-                
-                self.results.append(result)
+                self._evaluate_variant(variant, i + 1, len(candidates))
         
         print("\n" + "=" * 60)
-        print(f"OPTIMIZATION COMPLETE")
+        print("OPTIMIZATION COMPLETE")
         print(f"Best z-score: {self.best_z:.2f}")
         print(f"Best variant: {self.best_variant.label}")
         print(f"Params: {self.best_variant.to_dict()}")
@@ -294,7 +280,7 @@ class WAMOptimizer:
         
         return self.best_variant
     
-    def _save_log(self):
+    def _save_log(self) -> None:
         """Save results to log file."""
         with open(self.log_file, 'w') as f:
             json.dump(self.results, f, indent=2)

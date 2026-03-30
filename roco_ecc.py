@@ -8,12 +8,15 @@ import bchlib
 from typing import Tuple
 
 # BCH object for m=6, t=2 (n=63, but we will shorten to 32 bits)
-# New bchlib 2.x API: BCH(polynomial, t)
 # Primitive polynomial for GF(2^6): x^6 + x + 1 = 0x43
-BCH = bchlib.BCH(0x43, 2)
+try:
+    BCH = bchlib.BCH(prim_poly=0x43, t=2)
+except TypeError:
+    BCH = bchlib.BCH(0x43, 2)
 
 ALPHABET = "234679ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ALPHABET_MAP = {char: i for i, char in enumerate(ALPHABET)}
+
 
 # 16 bits payload, 16 bits ECC, 32 bits total (4 bytes)
 def encode_with_ecc(payload_bytes: bytes) -> bytes:
@@ -23,6 +26,7 @@ def encode_with_ecc(payload_bytes: bytes) -> bytes:
     ecc = BCH.encode(payload_bytes)  # 2 bytes ECC
     codeword = payload_bytes + ecc  # 4 bytes
     return codeword
+
 
 def decode_with_ecc(codeword: bytes) -> Tuple[bytes, bool, int]:
     """Decode 32-bit codeword (4 bytes) with BCH ECC."""
@@ -40,11 +44,11 @@ def decode_with_ecc(codeword: bytes) -> Tuple[bytes, bool, int]:
         else:
             # Old API: need to call correct()
             bitflips = result
-            if bitflips > 0 and hasattr(BCH, 'correct'):
+            if bitflips > 0 and hasattr(BCH, "correct"):
                 BCH.correct(data, ecc)
     except Exception:
         return bytes(data), False, -1
-    
+
     # Check if properly corrected
-    is_valid = (bitflips >= 0 and bitflips <= BCH.t)
+    is_valid = bitflips >= 0 and bitflips <= BCH.t
     return bytes(data), is_valid, bitflips

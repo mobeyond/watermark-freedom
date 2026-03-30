@@ -4,6 +4,8 @@ import base64
 from flask import Flask, request, jsonify, render_template
 from werkzeug.utils import secure_filename
 from torchvision.utils import save_image
+from typing import Optional, Tuple
+
 from notebooks.inference_utils import unnormalize_img
 from core import WatermarkManager
 from watermark_utils import create_error_response
@@ -11,11 +13,11 @@ from watermark_utils import create_error_response
 app = Flask(__name__)
 watermarker = WatermarkManager()
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# Configuration
+MAX_MESSAGE_LENGTH = 3  # ROCO encoding limit
 
-def get_mask_params_from_request(req):
+
+def get_mask_params_from_request(req) -> Tuple[str, Optional[dict]]:
     """Extracts mask mode and parameters from a Flask request."""
     use_frame_corners = req.form.get('use_frame_corners', 'true').lower() == 'true'
     if use_frame_corners:
@@ -25,19 +27,29 @@ def get_mask_params_from_request(req):
     if use_pixels:
         try:
             return 'pixels', {
-                'x': int(req.form['x_pixels']), 'y': int(req.form['y_pixels']),
-                'width': int(req.form['width_pixels']), 'height': int(req.form['height_pixels'])
+                'x': int(req.form['x_pixels']),
+                'y': int(req.form['y_pixels']),
+                'width': int(req.form['width_pixels']),
+                'height': int(req.form['height_pixels'])
             }
-        except (ValueError, KeyError):
-            raise ValueError('Pixel values must be provided as valid integers.')
+        except (ValueError, KeyError) as e:
+            raise ValueError(f'Invalid pixel parameters: {e}')
     else:
         try:
             return 'percentage', {
-                'x_percent': float(req.form['x_percent']), 'y_percent': float(req.form['y_percent']),
-                'width_percent': float(req.form['width_percent']), 'height_percent': float(req.form['height_percent'])
+                'x_percent': float(req.form['x_percent']),
+                'y_percent': float(req.form['y_percent']),
+                'width_percent': float(req.form['width_percent']),
+                'height_percent': float(req.form['height_percent'])
             }
-        except (ValueError, KeyError):
-            raise ValueError('Percentage values must be provided as valid numbers.')
+        except (ValueError, KeyError) as e:
+            raise ValueError(f'Invalid percentage parameters: {e}')
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 
 @app.route('/watermark', methods=['POST'])
 def watermark_image_route():
@@ -49,10 +61,17 @@ def watermark_image_route():
         if cover_file.filename == '':
             return create_error_response('No selected file', 400)
 
-        message = request.form.get('message', 'Hello World!')
+        message = request.form.get('message', 'ABC')
+        if len(message) > MAX_MESSAGE_LENGTH:
+            return create_error_response(
+                f'Message too long. Maximum {MAX_MESSAGE_LENGTH} characters.', 400
+            )
+
         mask_mode, mask_params = get_mask_params_from_request(request)
 
-        img_w, binary_message, coords = watermarker.embed(cover_file, message, mask_mode, mask_params)
+        img_w, binary_message, coords = watermarker.embed(
+            cover_file, message, mask_mode, mask_params
+        )
         
         img_w_to_save = unnormalize_img(img_w)
         img_buffer = io.BytesIO()
@@ -65,12 +84,11 @@ def watermark_image_route():
         filename_base, file_ext = os.path.splitext(original_filename)
         watermarked_filename = f"{filename_base}_watermarked{file_ext}"
 
-        # Calculate viewframe coordinates for frontend overlay
         viewframe = {
-            'x': coords.get('x_percent', 0),
-            'y': coords.get('y_percent', 0),
-            'width': coords.get('width_percent', 0),
-            'height': coords.get('height_percent', 0)
+            'x': float(coords.get('x_percent', 0)),
+            'y': float(coords.get('y_percent', 0)),
+            'width': float(coords.get('width_percent', 0)),
+            'height': float(coords.get('height_percent', 0))
         }
         
         return jsonify({
@@ -80,10 +98,11 @@ def watermark_image_route():
             'viewframe': viewframe
         })
 
-    except (ValueError, KeyError) as e:
+    except ValueError as e:
         return create_error_response(str(e), 400)
     except Exception as e:
         return create_error_response(f'An unexpected error occurred: {e}', 500)
+
 
 @app.route('/verify', methods=['POST'])
 def verify_watermark_route():
@@ -97,19 +116,8 @@ def verify_watermark_route():
 
         original_message = request.form.get('original_message')
         
-        # Get viewframe coordinates if provided
-        viewframe_coords = None
-        if 'viewframe_x' in request.form:
-            viewframe_coords = {
-                'x_percent': float(request.form.get('viewframe_x', 0)),
-                'y_percent': float(request.form.get('viewframe_y', 0)),
-                'width_percent': float(request.form.get('viewframe_width', 0)),
-                'height_percent': float(request.form.get('viewframe_height', 0))
-            }
+        results = watermarker.verify(watermarked_file, original_message)
         
-        results = watermarker.verify(watermarked_file, original_message, viewframe_coords)
-        
-        # Format the results for a user-friendly JSON response, matching frontend keys
         final_response = {
             'filename': secure_filename(watermarked_file.filename),
             'readable_message': results['readable_message'],
@@ -119,7 +127,6 @@ def verify_watermark_route():
             'raw_binary_message': results['binary_message'],
         }
         
-        # Add viewframe info if available
         if 'viewframe' in results:
             final_response['viewframe'] = results['viewframe']
         
@@ -128,12 +135,12 @@ def verify_watermark_route():
 
         return jsonify(final_response)
 
-    except (ValueError, KeyError) as e:
+    except ValueError as e:
         return create_error_response(str(e), 400)
     except Exception as e:
         return create_error_response(f'An unexpected error occurred: {e}', 500)
 
+
 if __name__ == '__main__':
     os.makedirs('templates', exist_ok=True)
     app.run(host='0.0.0.0', port=5000, debug=True)
-
