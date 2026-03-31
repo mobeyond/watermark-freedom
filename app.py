@@ -66,8 +66,13 @@ if len(img_np.shape) == 2:
 elif img_np.shape[2] == 4:
     img_np = img_np[:,:,:3]
 img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-x, y = int(coords.get('x', 0)), int(coords.get('y', 0))
-w, h = int(coords.get('width', img_np.shape[1])), int(coords.get('height', img_np.shape[0]))
+
+# Compute inner square (15% margin) like WAM's corners mode
+iw, ih = img_np.shape[1], img_np.shape[0]
+margin = int(min(iw, ih) * 0.15)
+x, y = margin, margin
+w, h = min(iw, ih) - 2 * margin, min(iw, ih) - 2 * margin
+
 corner_length = int(min(w, h) * 0.15)
 line_thickness = max(2, int(min(w, h) * 0.012))
 draw_corner_brackets(img_bgr, x, y, w, h, corner_length, line_thickness, method='distinctive')
@@ -78,7 +83,17 @@ buf = io.BytesIO()
 result_img.save(buf, format='PNG')
 img_b64 = base64.b64encode(buf.getvalue()).decode()
 
-print(json.dumps({{'image': img_b64, 'binary': binary[:32], 'coords': coords}}))
+print(json.dumps({{
+    'image': img_b64,
+    'binary': binary[:32],
+    'coords': {{
+        'x': x, 'y': y, 'width': w, 'height': h,
+        'x_percent': x / iw, 'y_percent': y / ih,
+        'width_percent': w / iw, 'height_percent': h / ih,
+        'viewframe_size': min(w, h),
+        'backend': 'videoseal'
+    }}
+}}))
 """
 
     try:
