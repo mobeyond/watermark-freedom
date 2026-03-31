@@ -1,8 +1,13 @@
 .git
 *.log
 *.pth
-__pycache__
+__pycache__/
 tin
-output
-outputs
+output/
+outputs/
 .letta/
+assets/
+notebook/
+test/
+test_output/
+test_output_robustness/

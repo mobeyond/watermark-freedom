@@ -165,6 +165,14 @@
                 </div>
                 
                 <div class="form-group">
+                    <label>Backend:</label>
+                    <select id="backend" name="backend" onchange="toggleBackend()">
+                        <option value="wam">WAM (32-bit, localized)</option>
+                        <option value="videoseal">VideoSeal (256-bit, full image)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
                     <label>Watermark Method:</label>
                     <select id="watermarkMethod" onchange="toggleWatermarkMethod()">
                         <option value="region">Region-based</option>
@@ -287,6 +295,25 @@
                 cornerInputs.style.display = 'block';
             }
         }
+        
+        function toggleBackend() {
+            const backend = document.getElementById('backend').value;
+            const messageInput = document.getElementById('message');
+            const helpText = document.querySelector('.help-text');
+            
+            if (backend === 'videoseal') {
+                messageInput.maxLength = 32;
+                messageInput.removeAttribute('pattern');
+                messageInput.style.textTransform = 'none';
+                helpText.innerHTML = 'Up to 32 characters. Any ASCII text allowed.';
+            } else {
+                messageInput.maxLength = 3;
+                messageInput.pattern = '[A-Z4679#]*';
+                messageInput.style.textTransform = 'uppercase';
+                messageInput.value = messageInput.value.substring(0, 3);
+                helpText.innerHTML = 'Up to 3 characters. Allowed: <strong>A-Z, 4, 6, 7, 9, #</strong>';
+            }
+        }
 
         function toggleCoordinateSystem() {
             const system = document.getElementById('coordinateSystem').value;
@@ -311,6 +338,9 @@
         document.getElementById('watermarkForm').onsubmit = async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
+            
+            const backend = document.getElementById('backend').value;
+            formData.append('backend', backend);
             
             const useCorners = document.getElementById('watermarkMethod').value === 'corners';
             formData.append('use_frame_corners', useCorners ? 'true' : 'false');
@@ -378,6 +408,9 @@
         document.getElementById('verifyForm').onsubmit = async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
+            
+            const backend = document.getElementById('backend').value;
+            formData.append('backend', backend);
             
             // Read all coordinate and method settings from the form and append them
             // to ensure the backend gets all required data for verification.
