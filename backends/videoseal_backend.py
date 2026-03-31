@@ -46,8 +46,13 @@ if len(img_np.shape) == 2:
 elif img_np.shape[2] == 4:
     img_np = img_np[:,:,:3]
 iw, ih = img_np.shape[1], img_np.shape[0]
-m = int(min(iw, ih) * {margin})
-x, y, w, h = m, m, min(iw, ih) - 2*m, min(iw, ih) - 2*m
+min_dim = min(iw, ih)
+# Ensure inner square has min dimension >= 256 for reliable VideoSeal detection.
+# When image is small, reduce/eliminate margin so the watermark fills more area.
+raw_margin = int(min_dim * {margin})
+max_margin = max(0, (min_dim - 256) // 2)
+m = min(raw_margin, max_margin)
+x, y, w, h = m, m, min_dim - 2*m, min_dim - 2*m
 
 img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 cl = int(min(w, h) * 0.15)
@@ -60,7 +65,7 @@ out.save(buf, format='PNG')
 
 print(json.dumps({{
     'image': base64.b64encode(buf.getvalue()).decode(),
-    'binary': binary[:32],
+    'binary': binary,
     'coords': {{'x': x, 'y': y, 'width': w, 'height': h,
                 'x_percent': x/iw, 'y_percent': y/ih,
                 'width_percent': w/iw, 'height_percent': h/ih,
@@ -81,8 +86,11 @@ wm = VideoSealBackend()
 result = wm.verify(img, {original_message})
 
 print(json.dumps({{
-    'readable': result['readable_message'][:32],
-    'accuracy': result.get('bit_accuracy'),
+    'readable': result.get('readable_message', ''),
+    'ecc_valid': result.get('ecc_valid'),
+    'corrected_bitflips': result.get('corrected_bitflips'),
+    'bit_accuracy': result.get('bit_accuracy'),
+    'binary_message': result.get('binary_message', ''),
     'viewframe': result.get('viewframe')
 }}))
 """
@@ -136,27 +144,31 @@ class VideoSealBackend:
         return tensor.to(self.device)
 
     def _message_to_bits(self, message: str, n_bits: int) -> list:
-        bits = []
-        for char in message:
-            val = ord(char) if isinstance(char, str) else char
-            for i in range(8):
-                bits.append((val >> (7 - i)) & 1)
-        while len(bits) < n_bits:
-            bits.append(0)
-        return bits[:n_bits]
+        from roco_core import encode_to_bits
+        from roco_ecc import encode_with_ecc
 
-    def _bits_to_message(self, bits: list, bytes_needed: int = 32) -> str:
-        message = []
-        for i in range(0, min(len(bits), bytes_needed * 8), 8):
-            byte_bits = bits[i : i + 8]
-            if len(byte_bits) < 8:
-                break
-            val = sum(b << (7 - j) for j, b in enumerate(byte_bits))
-            if 32 <= val <= 126:
-                message.append(chr(val))
-            else:
-                message.append("?")
-        return "".join(message)
+        data_bits = encode_to_bits(message)
+        payload_bytes = data_bits.to_bytes(2, "big")
+        codeword_bytes = encode_with_ecc(payload_bytes)
+        codeword_str = "".join(f"{b:08b}" for b in codeword_bytes)
+        repeated = (codeword_str * ((n_bits // len(codeword_str)) + 1))[:n_bits]
+        return [int(b) for b in repeated]
+
+    def _bits_to_message(self, bits: list) -> Tuple[str, bool, int, float]:
+        from roco_core import decode_from_bits
+        from roco_ecc import decode_with_ecc
+
+        bits_str = "".join(str(b) for b in bits)
+        codeword_str = bits_str[:32]
+        codeword_bytes = int(codeword_str, 2).to_bytes(4, "big")
+        corrected_data, ecc_valid, bitflips = decode_with_ecc(codeword_bytes)
+        if corrected_data:
+            data_bits = int.from_bytes(corrected_data, "big") & 0xFFFF
+            decoded = decode_from_bits(data_bits)
+        else:
+            decoded = "DECODE_FAIL"
+        accuracy = sum(1 for i in range(32) if bits_str[i] == codeword_str[i]) / 32.0
+        return decoded, ecc_valid, bitflips, accuracy
 
     def _inner_square_coords(
         self, iw: int, ih: int
@@ -190,7 +202,11 @@ class VideoSealBackend:
                 script_path = f.name
 
             result = subprocess.run(
-                [PYTHON312, script_path], capture_output=True, text=True, timeout=120
+                [PYTHON312, script_path],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env={**os.environ, "PYTHONWARNINGS": "ignore"},
             )
             if result.returncode != 0:
                 raise RuntimeError(result.stderr or result.stdout)
@@ -228,7 +244,11 @@ class VideoSealBackend:
                 script_path = f.name
 
             proc = subprocess.run(
-                [PYTHON312, script_path], capture_output=True, text=True, timeout=60
+                [PYTHON312, script_path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={**os.environ, "PYTHONWARNINGS": "ignore"},
             )
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr or proc.stdout)
@@ -291,15 +311,14 @@ class VideoSealBackend:
 
         msg_bits = (preds[0, 1:] > 0.5).long().cpu().tolist()
         binary_str = "".join(str(b) for b in msg_bits)
-        readable = self._bits_to_message(msg_bits)
+        readable, ecc_valid, bitflips, accuracy = self._bits_to_message(msg_bits)
 
         result = {
             "binary_message": binary_str,
             "readable_message": readable,
-            "bit_error_rate_percent": None,
-            "corrected_bitflips": None,
-            "ecc_valid": None,
-            "bit_accuracy": None,
+            "ecc_valid": ecc_valid,
+            "corrected_bitflips": bitflips,
+            "bit_accuracy": accuracy,
             "viewframe": {
                 "x": 0,
                 "y": 0,
@@ -313,12 +332,5 @@ class VideoSealBackend:
                 "size": min(h, w),
             },
         }
-
-        if original_message:
-            orig_bits = self._message_to_bits(original_message, self._n_bits)
-            accuracy = sum(1 for p, o in zip(msg_bits, orig_bits) if p == o) / len(
-                orig_bits
-            )
-            result["bit_accuracy"] = accuracy
 
         return result
