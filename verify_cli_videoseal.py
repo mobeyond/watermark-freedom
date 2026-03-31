@@ -62,17 +62,24 @@ def verify_image(image_path, backend: VideoSealBackend, original_message=None) -
     result = backend.verify_bytes(img_bytes, original_message)
 
     vf_info = format_viewframe(result.get("viewframe", {}))
-    accuracy = result.get("accuracy")
+    ecc_valid = result.get("ecc_valid")
+    bitflips = result.get("corrected_bitflips")
+    accuracy = result.get("bit_accuracy")
     acc_str = format_accuracy(accuracy)
-    passed = accuracy is not None and accuracy >= 0.9
+    readable_msg = result.get("readable", "")
+    passed = (
+        ecc_valid is True
+        and bool(readable_msg)
+        and (original_message is None or readable_msg == original_message)
+    )
 
     return {
         "filename": os.path.basename(image_path),
         "readable_message": result.get("readable", "N/A"),
-        "bit_error_rate": "N/A",
-        "bitflips": "N/A",
-        "ecc_valid": passed,
+        "ecc_valid": ecc_valid,
+        "corrected_bitflips": bitflips,
         "bit_accuracy": acc_str,
+        "raw_binary": result.get("binary_message", "")[:64],
         "viewframe": vf_info,
     }
 
@@ -96,7 +103,7 @@ def main():
         "-m",
         type=str,
         default=None,
-        help='Original message for comparison (e.g., "HI")',
+        help='Original message for comparison (e.g., "ABC")',
     )
     parser.add_argument(
         "--threshold",
@@ -155,13 +162,10 @@ def main():
             result = verify_image(img_path, backend, args.original_message)
             results.append({"filename": result["filename"], **result})
 
-            accuracy = result.get("bit_accuracy")
-            if accuracy != "N/A":
-                acc_val = float(accuracy.rstrip("%")) / 100
-                if acc_val >= args.threshold:
-                    success_count += 1
-                else:
-                    fail_count += 1
+            if result.get("ecc_valid") is True and bool(
+                result.get("readable_message", "")
+            ):
+                success_count += 1
             else:
                 fail_count += 1
 
