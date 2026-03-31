@@ -16,7 +16,6 @@ wam_watermarker = WatermarkManager()
 vs_watermarker = VideoSealBackend()
 
 MAX_MESSAGE_LENGTH_WAM = 3
-MAX_MESSAGE_LENGTH_VIDEO = 32
 
 
 def get_mask_params_from_request(req) -> Tuple[str, Optional[dict]]:
@@ -169,9 +168,9 @@ def handle_wam_verify(watermarked_file, original_message):
 
 
 def handle_videoseal_watermark(cover_file, message):
-    if len(message) > MAX_MESSAGE_LENGTH_VIDEO:
+    if len(message) > MAX_MESSAGE_LENGTH_WAM:
         return create_error_response(
-            f"Message too long. Maximum {MAX_MESSAGE_LENGTH_VIDEO} characters for VideoSeal.",
+            f"Message too long. Maximum {MAX_MESSAGE_LENGTH_WAM} characters.",
             400,
         )
 
@@ -205,13 +204,18 @@ def handle_videoseal_verify(watermarked_file, original_message):
     final_response = {
         "filename": secure_filename(watermarked_file.filename),
         "readable_message": result.get("readable", ""),
-        "bit_accuracy": result.get("accuracy"),
+        "ecc_valid": result.get("ecc_valid"),
+        "corrected_bitflips": result.get("corrected_bitflips"),
+        "bit_accuracy": result.get("bit_accuracy"),
+        "raw_binary_message": result.get("binary_message", ""),
         "viewframe": result.get("viewframe"),
         "backend": "videoseal",
     }
 
-    if original_message and result.get("accuracy") is not None:
-        final_response["bit_accuracy_vs_original"] = f"{result['accuracy'] * 100:.2f}%"
+    if result.get("bit_accuracy") is not None:
+        final_response["bit_accuracy_vs_original"] = (
+            f"{result['bit_accuracy'] * 100:.2f}%"
+        )
 
     return jsonify(final_response)
 

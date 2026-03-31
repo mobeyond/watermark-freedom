@@ -13,9 +13,12 @@ def verify_image_and_print(img_path, original_message=None, backend=DEFAULT_BACK
         img_bytes = open(img_path, "rb").read()
         result = wm.verify_bytes(img_bytes, original_message)
         print(f"\n--- VideoSeal Verification: {os.path.basename(img_path)} ---")
-        print(f"Decoded Message: '{result.get('readable', '')}'")
-        if result.get("accuracy") is not None:
-            print(f"Bit Accuracy: {result['accuracy'] * 100:.2f}%")
+        print(f"Decoded Message: '{result.get('readable_message', '')}'")
+        print(f"ECC Valid: {result.get('ecc_valid')}")
+        print(f"Corrected Bitflips: {result.get('corrected_bitflips')}")
+        if result.get("bit_accuracy") is not None:
+            print(f"Codeword Accuracy: {result['bit_accuracy'] * 100:.2f}%")
+        print(f"Raw Binary: {result.get('binary_message', '')[:64]}...")
         print("--- End of Report ---")
     else:
         watermarker = WatermarkManager()
