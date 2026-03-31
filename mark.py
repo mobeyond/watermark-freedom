@@ -1,5 +1,7 @@
 import os
+import io
 import argparse
+from PIL import Image
 from torchvision.utils import save_image
 from notebooks.inference_utils import unnormalize_img
 from viewframe import SUPPORTED_BRACKET_METHODS, DEFAULT_BRACKET_METHOD
@@ -21,7 +23,16 @@ def watermark_image_and_save(
         from backends.videoseal_backend import VideoSealBackend
 
         wm = VideoSealBackend()
-        img_w, _, coords = wm.embed(img_path, message)
+        img_bytes = open(img_path, "rb").read()
+        img_out_bytes, binary, coords = wm.embed_bytes(img_bytes, message)
+        img_w = Image.open(io.BytesIO(img_out_bytes))
+        output_path = output_path or f"{os.path.splitext(img_path)[0]}_watermarked.png"
+        img_w.save(output_path)
+        print(f"\nWatermark embedded successfully (backend: {backend}).")
+        print(f"Binary message: {binary[:32]}")
+        print(f"Coordinates: {coords}")
+        print(f"Saved to {output_path}")
+        return output_path
     else:
         from core import WatermarkManager
 

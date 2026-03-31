@@ -9,148 +9,11 @@ from typing import Optional, Tuple
 from notebooks.inference_utils import unnormalize_img
 from core import WatermarkManager
 from watermark_utils import create_error_response
+from backends.videoseal_backend import VideoSealBackend
 
 app = Flask(__name__)
 wam_watermarker = WatermarkManager()
-
-PYTHON312 = "/usr/bin/python3.12"
-PYTHON312_SITE = "/home/h/.local/lib/python3.12/site-packages"
-
-
-# ---------------------------------------------------------------------------
-# VideoSeal subprocess helpers
-# ---------------------------------------------------------------------------
-
-
-def _find_json_in_output(stdout: str) -> dict:
-    import json
-    import re
-
-    match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", stdout, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    raise RuntimeError(f"No JSON found in output: {stdout[:500]}")
-
-
-def videoseal_embed(image_bytes, message):
-    import subprocess
-    import tempfile
-    import os
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode="wb") as f:
-        f.write(image_bytes)
-        img_path = f.name
-
-    script = f"""
-import sys
-import os
-import io
-import base64
-import json
-sys.path.insert(0, '{PYTHON312_SITE}')
-sys.path.insert(0, '/home/h/FLY/watermark-freedom')
-os.chdir('{PYTHON312_SITE}')
-from PIL import Image
-from backends.videoseal_backend import VideoSealBackend
-from viewframe import draw_corner_brackets
-import cv2
-import numpy as np
-
-img = Image.open('{img_path}').convert('RGB')
-wm = VideoSealBackend()
-result, binary, coords = wm.embed(img, '{message}')
-
-img_np = np.array(result)
-if len(img_np.shape) == 2:
-    img_np = np.stack([img_np]*3, axis=-1)
-elif img_np.shape[2] == 4:
-    img_np = img_np[:,:,:3]
-img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-
-# Compute inner square (15% margin) like WAM's corners mode
-iw, ih = img_np.shape[1], img_np.shape[0]
-margin = int(min(iw, ih) * 0.15)
-x, y = margin, margin
-w, h = min(iw, ih) - 2 * margin, min(iw, ih) - 2 * margin
-
-corner_length = int(min(w, h) * 0.15)
-line_thickness = max(2, int(min(w, h) * 0.012))
-draw_corner_brackets(img_bgr, x, y, w, h, corner_length, line_thickness, method='distinctive')
-img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-result_img = Image.fromarray(img_rgb)
-
-buf = io.BytesIO()
-result_img.save(buf, format='PNG')
-img_b64 = base64.b64encode(buf.getvalue()).decode()
-
-print(json.dumps({{
-    'image': img_b64,
-    'binary': binary[:32],
-    'coords': {{
-        'x': x, 'y': y, 'width': w, 'height': h,
-        'x_percent': x / iw, 'y_percent': y / ih,
-        'width_percent': w / iw, 'height_percent': h / ih,
-        'viewframe_size': min(w, h),
-        'backend': 'videoseal'
-    }}
-}}))
-"""
-
-    try:
-        result = subprocess.run(
-            [PYTHON312, "-c", script], capture_output=True, text=True, timeout=120
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
-        return _find_json_in_output(result.stdout)
-    finally:
-        os.unlink(img_path)
-
-
-def videoseal_verify(image_bytes, original_message=None):
-    import subprocess
-    import tempfile
-    import os
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode="wb") as f:
-        f.write(image_bytes)
-        img_path = f.name
-
-    script = f"""
-import sys
-import os
-import json
-sys.path.insert(0, '{PYTHON312_SITE}')
-sys.path.insert(0, '/home/h/FLY/watermark-freedom')
-os.chdir('{PYTHON312_SITE}')
-from PIL import Image
-from backends.videoseal_backend import VideoSealBackend
-
-img = Image.open('{img_path}').convert('RGB')
-wm = VideoSealBackend()
-result = wm.verify(img, {repr(original_message)})
-
-print(json.dumps({{
-    'readable': result['readable_message'][:32],
-    'accuracy': result.get('bit_accuracy'),
-    'viewframe': result.get('viewframe')
-}}))
-"""
-
-    try:
-        proc = subprocess.run(
-            [PYTHON312, "-c", script], capture_output=True, text=True, timeout=60
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr or proc.stdout)
-        return _find_json_in_output(proc.stdout)
-    finally:
-        os.unlink(img_path)
-
-
-# ---------------------------------------------------------------------------
-# Mask / viewframe helpers (WAM)
-# ---------------------------------------------------------------------------
+vs_watermarker = VideoSealBackend()
 
 MAX_MESSAGE_LENGTH_WAM = 3
 MAX_MESSAGE_LENGTH_VIDEO = 32
@@ -182,11 +45,6 @@ def get_mask_params_from_request(req) -> Tuple[str, Optional[dict]]:
             }
         except (ValueError, KeyError) as e:
             raise ValueError(f"Invalid percentage parameters: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 
 @app.route("/")
@@ -240,11 +98,6 @@ def verify_watermark_route():
         return create_error_response(str(e), 400)
     except Exception as e:
         return create_error_response(f"An unexpected error occurred: {e}", 500)
-
-
-# ---------------------------------------------------------------------------
-# WAM handlers
-# ---------------------------------------------------------------------------
 
 
 def handle_wam_watermark(cover_file, message):
@@ -315,11 +168,6 @@ def handle_wam_verify(watermarked_file, original_message):
     return jsonify(final_response)
 
 
-# ---------------------------------------------------------------------------
-# VideoSeal handlers
-# ---------------------------------------------------------------------------
-
-
 def handle_videoseal_watermark(cover_file, message):
     if len(message) > MAX_MESSAGE_LENGTH_VIDEO:
         return create_error_response(
@@ -328,25 +176,23 @@ def handle_videoseal_watermark(cover_file, message):
         )
 
     image_bytes = cover_file.read()
-    result = videoseal_embed(image_bytes, message)
+    img_bytes, binary, coords = vs_watermarker.embed_bytes(image_bytes, message)
 
     original_filename = secure_filename(cover_file.filename)
     filename_base, file_ext = os.path.splitext(original_filename)
     watermarked_filename = f"{filename_base}_watermarked{file_ext}"
 
-    viewframe = {
-        "x": float(result["coords"].get("x_percent", 0)),
-        "y": float(result["coords"].get("y_percent", 0)),
-        "width": float(result["coords"].get("width_percent", 1.0)),
-        "height": float(result["coords"].get("height_percent", 1.0)),
-    }
-
     return jsonify(
         {
-            "image": result["image"],
+            "image": base64.b64encode(img_bytes).decode(),
             "filename": watermarked_filename,
-            "binary_message": result["binary"],
-            "viewframe": viewframe,
+            "binary_message": binary,
+            "viewframe": {
+                "x": float(coords.get("x_percent", 0)),
+                "y": float(coords.get("y_percent", 0)),
+                "width": float(coords.get("width_percent", 1.0)),
+                "height": float(coords.get("height_percent", 1.0)),
+            },
             "backend": "videoseal",
         }
     )
@@ -354,7 +200,7 @@ def handle_videoseal_watermark(cover_file, message):
 
 def handle_videoseal_verify(watermarked_file, original_message):
     image_bytes = watermarked_file.read()
-    result = videoseal_verify(image_bytes, original_message)
+    result = vs_watermarker.verify_bytes(image_bytes, original_message)
 
     final_response = {
         "filename": secure_filename(watermarked_file.filename),
