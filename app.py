@@ -16,6 +16,7 @@ wam_watermarker = WatermarkManager()
 vs_watermarker = VideoSealBackend()
 
 MAX_MESSAGE_LENGTH_WAM = 3
+MAX_MESSAGE_LENGTH_VIDEO = 32
 
 
 def get_mask_params_from_request(req) -> Tuple[str, Optional[dict]]:
@@ -61,7 +62,7 @@ def watermark_image_route():
         if cover_file.filename == "":
             return create_error_response("No selected file", 400)
 
-        backend = request.form.get("backend", "wam").lower()
+        backend = request.form.get("backend", "videoseal").lower()
         message = request.form.get("message", "ABC")
 
         if backend == "videoseal":
@@ -85,7 +86,7 @@ def verify_watermark_route():
         if watermarked_file.filename == "":
             return create_error_response("No selected file", 400)
 
-        backend = request.form.get("backend", "wam").lower()
+        backend = request.form.get("backend", "videoseal").lower()
         original_message = request.form.get("original_message")
 
         if backend == "videoseal":
@@ -168,9 +169,9 @@ def handle_wam_verify(watermarked_file, original_message):
 
 
 def handle_videoseal_watermark(cover_file, message):
-    if len(message) > MAX_MESSAGE_LENGTH_WAM:
+    if len(message) > MAX_MESSAGE_LENGTH_VIDEO:
         return create_error_response(
-            f"Message too long. Maximum {MAX_MESSAGE_LENGTH_WAM} characters.",
+            f"Message too long. Maximum {MAX_MESSAGE_LENGTH_VIDEO} characters.",
             400,
         )
 
