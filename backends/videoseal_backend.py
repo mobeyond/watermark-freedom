@@ -33,7 +33,7 @@ sys.path.insert(0, '/home/h/FLY/watermark-freedom')
 os.chdir('{site}')
 from PIL import Image
 from backends.videoseal_backend import VideoSealBackend
-from viewframe import draw_corner_brackets
+from viewframe import get_default_viewframe_coords, draw_viewframe
 import cv2, numpy as np
 
 img = Image.open('{img_path}').convert('RGB')
@@ -46,18 +46,11 @@ if len(img_np.shape) == 2:
 elif img_np.shape[2] == 4:
     img_np = img_np[:,:,:3]
 iw, ih = img_np.shape[1], img_np.shape[0]
-min_dim = min(iw, ih)
-# Ensure inner square has min dimension >= 256 for reliable VideoSeal detection.
-# When image is small, reduce/eliminate margin so the watermark fills more area.
-raw_margin = int(min_dim * {margin})
-max_margin = max(0, (min_dim - 256) // 2)
-m = min(raw_margin, max_margin)
-x, y, w, h = m, m, min_dim - 2*m, min_dim - 2*m
 
 img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-cl = int(min(w, h) * 0.15)
-lt = max(2, int(min(w, h) * 0.012))
-draw_corner_brackets(img_bgr, x, y, w, h, cl, lt, method='distinctive')
+coords = get_default_viewframe_coords((ih, iw), margin_pct={margin})
+draw_viewframe(img_bgr, coords['x'], coords['y'], coords['width'], coords['height'], method='distinctive')
+
 img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 out = Image.fromarray(img_rgb)
 buf = io.BytesIO()
@@ -66,10 +59,10 @@ out.save(buf, format='PNG')
 print(json.dumps({{
     'image': base64.b64encode(buf.getvalue()).decode(),
     'binary': binary,
-    'coords': {{'x': x, 'y': y, 'width': w, 'height': h,
-                'x_percent': x/iw, 'y_percent': y/ih,
-                'width_percent': w/iw, 'height_percent': h/ih,
-                'viewframe_size': min(w, h), 'backend': 'videoseal'}}
+    'coords': {{'x': coords['x'], 'y': coords['y'], 'width': coords['width'], 'height': coords['height'],
+                'x_percent': coords['x_percent'], 'y_percent': coords['y_percent'],
+                'width_percent': coords['width_percent'], 'height_percent': coords['height_percent'],
+                'viewframe_size': min(coords['width'], coords['height']), 'backend': 'videoseal'}}
 }}))
 """
 
