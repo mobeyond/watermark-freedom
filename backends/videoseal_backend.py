@@ -95,28 +95,36 @@ img_square = crop_to_centered_square(img_np)
 
 # 2. Try to detect actual viewframe from corner brackets
 img_bgr = cv2.cvtColor(img_square, cv2.COLOR_RGB2BGR)
+h, w = img_bgr.shape[:2]
 detected = detect_viewframe(img_bgr, method='diagonal')
 
 # 3. Use detected if valid, otherwise fallback to default margin
 if detected:
-    x, y, w, h = detected['x'], detected['y'], detected['width'], detected['height']
-    margin_pct = x / min(img_square.shape[:2])
+    x = int(detected['x'])
+    y = int(detected['y'])
+    w_det = int(detected['width'])
+    h_det = int(detected['height'])
+    min_dim = min(h, w)
+    margin_pct = x / min_dim if min_dim > 0 else 0.15
     coords = {
-        'x': x, 'y': y, 'width': w, 'height': h,
-        'x_percent': x / img_square.shape[1],
-        'y_percent': y / img_square.shape[0],
-        'width_percent': w / img_square.shape[1],
-        'height_percent': h / img_square.shape[0],
+        'x': x, 'y': y, 'width': w_det, 'height': h_det,
+        'x_percent': x / w if w > 0 else 0,
+        'y_percent': y / h if h > 0 else 0,
+        'width_percent': w_det / w if w > 0 else 0,
+        'height_percent': h_det / h if h > 0 else 0,
         'margin_pct': margin_pct,
         'detected': True
     }
 else:
-    coords = get_default_viewframe_coords(img_square.shape[:2], margin_pct={margin})
+    coords = get_default_viewframe_coords((h, w), margin_pct={margin})
     coords['detected'] = False
 
 # 4. Extract viewframe region (same as embed)
-x, y, w, h = coords['x'], coords['y'], coords['width'], coords['height']
-viewframe_region = img_square[y:y+h, x:x+w]
+vf_x = coords['x']
+vf_y = coords['y']
+vf_w = coords['width']
+vf_h = coords['height']
+viewframe_region = img_square[vf_y:vf_y+vf_h, vf_x:vf_x+vf_w]
 
 # 5. Verify ONLY on viewframe region
 viewframe_pil = Image.fromarray(viewframe_region)
