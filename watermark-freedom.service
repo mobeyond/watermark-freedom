@@ -1,0 +1,22 @@
+[Unit]
+Description=Watermark Freedom Service (WAM + VideoSeal)
+After=network.target
+
+[Service]
+Type=simple
+User=h
+Group=h
+WorkingDirectory=/home/h/FLY/watermark-freedom
+ExecStart=/home/h/miniconda3/envs/VINE/bin/python app.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

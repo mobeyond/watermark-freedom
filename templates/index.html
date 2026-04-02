@@ -167,8 +167,8 @@
                 <div class="form-group">
                     <label>Backend:</label>
                     <select id="backend" name="backend" onchange="toggleBackend()">
-                        <option value="wam">WAM (32-bit, localized)</option>
                         <option value="videoseal">VideoSeal (256-bit, full image)</option>
+                        <option value="wam">WAM (32-bit, localized)</option>
                     </select>
                 </div>
                 
@@ -192,11 +192,14 @@
                     <div id="percentInputs" class="form-group">
                         <div>
                             <label>X Position (0-1)</label>
-                            <input type="number" name="x_percent" id="x_percent" value="0.15" step="0.05" min="0" max="0.5" onchange="updatePercentSize()">
+                            <input type="number" name="x_percent" id="x_percent" value="0.15" step="0.05" min="0" max="0.5" oninput="syncXY(this, 'percent')">
                         </div>
                         <div>
                             <label>Y Position (0-1)</label>
-                            <input type="number" name="y_percent" id="y_percent" value="0.15" step="0.05" min="0" max="0.5" onchange="updatePercentSize()">
+                            <input type="number" name="y_percent" id="y_percent" value="0.15" step="0.05" min="0" max="0.5" oninput="syncXY(this, 'percent')">
+                        </div>
+                        <div>
+                            <label><input type="checkbox" id="syncXY" checked onchange="toggleSyncXY()"> Sync X,Y</label>
                         </div>
                         <div>
                             <label>Width (0-1) - Auto</label>
@@ -257,11 +260,6 @@
                     <input type="file" id="watermarked" name="watermarked" accept="image/*" required>
                 </div>
                 
-                <div class="form-group">
-                    <label for="original_message">Original Message (optional):</label>
-                    <input type="text" id="original_message" name="original_message" placeholder="Enter the original message">
-                </div>
-                
                 <button type="submit">Verify Watermark</button>
             </form>
             
@@ -289,11 +287,67 @@
             const median = Math.round((x + y) / 2);
             // Assume image is 256x256 for now (will be updated by server)
             const imgSize = 256;
-            // Calculate size for centered square: imgSize - 2*median
+            // Calculate size for centered image: imgSize - 2*median
             const size = Math.max(0, imgSize - 2 * median);
             document.getElementById('width_pixels').value = size;
             document.getElementById('height_pixels').value = size;
         }
+        
+        // Sync X and Y values when sync checkbox is checked
+        function syncXY(input, type) {
+            const syncEnabled = document.getElementById('syncXY').checked;
+            if (!syncEnabled) return;
+            
+            // Prevent recursion - check if we're already syncing
+            if (input._syncing) return;
+            input._syncing = true;
+            
+            const value = parseFloat(input.value) || 0;
+            if (input.id === 'x_percent') {
+                document.getElementById('y_percent').value = value.toFixed(2);
+            } else if (input.id === 'y_percent') {
+                document.getElementById('x_percent').value = value.toFixed(2);
+            } else if (input.id === 'x_pixels') {
+                document.getElementById('y_pixels').value = Math.round(value);
+            } else if (input.id === 'y_pixels') {
+                document.getElementById('x_pixels').value = Math.round(value);
+            }
+            
+            // Also update width/height based on new X,Y
+            if (type === 'percent') {
+                updatePercentSize();
+            } else {
+                updatePixelSize();
+            }
+            
+            // Allow syncing again after a brief delay
+            setTimeout(() => { input._syncing = false; }, 10);
+        }
+        
+        function toggleSyncXY() {
+            // When toggled on, immediately sync X and Y based on current coordinate system
+            const coordSystem = document.getElementById('coordinateSystem').value;
+            if (document.getElementById('syncXY').checked) {
+                if (coordSystem === 'percent') {
+                    const xVal = document.getElementById('x_percent').value;
+                    document.getElementById('y_percent').value = xVal;
+                    updatePercentSize();
+                } else {
+                    const xVal = document.getElementById('x_pixels').value;
+                    document.getElementById('y_pixels').value = xVal;
+                    updatePixelSize();
+                }
+            }
+        }
+        
+        function initForm() {
+            // Initialize based on default backend (VideoSeal)
+            toggleBackend();
+            // Also initialize width/height based on default X,Y values
+            updatePercentSize();
+        }
+        
+        window.onload = initForm;
         
         function toggleWatermarkMethod() {
             const method = document.getElementById('watermarkMethod').value;
@@ -465,13 +519,14 @@
                     let viewframeHtml = '';
                     if (result.viewframe) {
                         const vf = result.viewframe;
+                        const areaRatio = (vf.width_percent * vf.height_percent * 100).toFixed(1);
                         viewframeHtml = `
                             <h4>Detected Viewframe:</h4>
                             <p><strong>Position:</strong> (${vf.x}, ${vf.y}) pixels</p>
                             <p><strong>Size:</strong> ${vf.width} x ${vf.height} pixels</p>
                             <p><strong>Position (%):</strong> (${(vf.x_percent * 100).toFixed(1)}%, ${(vf.y_percent * 100).toFixed(1)}%)</p>
                             <p><strong>Size (%):</strong> ${(vf.width_percent * 100).toFixed(1)}% x ${(vf.height_percent * 100).toFixed(1)}%</p>
-                            <p><strong>Area Ratio:</strong> ${(vf.ratio * 100).toFixed(1)}% of image</p>
+                            <p><strong>Area Ratio:</strong> ${areaRatio}% of image</p>
                         `;
                     }
                     

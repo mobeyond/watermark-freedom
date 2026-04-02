@@ -127,14 +127,20 @@ class WatermarkManager:
             return result["x"], result["y"], result["width"], result["height"]
         return None
 
-    def _get_fallback_viewframe(self, h: int, w: int) -> Tuple[int, int, int, int]:
-        """Get default centered square viewframe with minimum size guarantee."""
-        min_dim = min(h, w)
-        # Cap size to image dimensions to avoid negative coordinates
-        square_size = min(min_dim, max(MIN_VIEWFRAME_SIZE, min_dim))
-        x = max(0, (w - square_size) // 2)
-        y = max(0, (h - square_size) // 2)
-        return x, y, square_size, square_size
+    def _get_fallback_viewframe(
+        self, h: int, w: int, margin_percent: float = DEFAULT_MARGIN_PERCENT
+    ) -> Tuple[int, int, int, int]:
+        """Get fallback viewframe using the same margin calculation as embed.
+
+        This ensures that when detection fails, the fallback region matches
+        the default embedding region (centered square with margin).
+        """
+        margin = int(min(h, w) * margin_percent)
+        x = y = margin
+        size = min(h, w) - 2 * margin
+        # Ensure positive size
+        size = max(1, size)
+        return x, y, size, size
 
     def _recommend_scaling_w(self, viewframe_size: int) -> float:
         """Recommend scaling_w based on viewframe size.
