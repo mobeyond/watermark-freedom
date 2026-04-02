@@ -165,31 +165,58 @@ class VideoSealBackend:
         return tensor.to(self.device)
 
     def _message_to_bits(self, message: str, n_bits: int) -> list:
-        from roco_core import encode_to_bits
-        from roco_ecc import encode_with_ecc
+        if len(message) <= 3:
+            from roco_core import encode_to_bits
+            from roco_ecc import encode_with_ecc
 
-        data_bits = encode_to_bits(message)
-        payload_bytes = data_bits.to_bytes(2, "big")
-        codeword_bytes = encode_with_ecc(payload_bytes)
-        codeword_str = "".join(f"{b:08b}" for b in codeword_bytes)
-        repeated = (codeword_str * ((n_bits // len(codeword_str)) + 1))[:n_bits]
-        return [int(b) for b in repeated]
+            data_bits = encode_to_bits(message)
+            payload_bytes = data_bits.to_bytes(2, "big")
+            codeword_bytes = encode_with_ecc(payload_bytes)
+            codeword_str = "".join(f"{b:08b}" for b in codeword_bytes)
+            repeated = ("0" + codeword_str * ((n_bits // (len(codeword_str) + 1)) + 1))[
+                :n_bits
+            ]
+            return [int(b) for b in repeated]
+        else:
+            bits = [1]
+            for char in message[: n_bits // 8 - 1]:
+                bits.extend([int(b) for b in format(ord(char), "08b")])
+            if len(bits) < n_bits:
+                bits.extend([0] * (n_bits - len(bits)))
+            return bits[:n_bits]
 
     def _bits_to_message(self, bits: list) -> Tuple[str, bool, int, float]:
-        from roco_core import decode_from_bits
-        from roco_ecc import decode_with_ecc
+        if not bits:
+            return "", False, 0, 0.0
 
-        bits_str = "".join(str(b) for b in bits)
-        codeword_str = bits_str[:32]
-        codeword_bytes = int(codeword_str, 2).to_bytes(4, "big")
-        corrected_data, ecc_valid, bitflips = decode_with_ecc(codeword_bytes)
-        if corrected_data:
-            data_bits = int.from_bytes(corrected_data, "big") & 0xFFFF
-            decoded = decode_from_bits(data_bits)
+        if bits[0] == 1:
+            decoded = ""
+            for i in range(1, min(len(bits), 256), 8):
+                byte_bits = bits[i : i + 8]
+                if len(byte_bits) == 8:
+                    char_code = int("".join(str(b) for b in byte_bits), 2)
+                    if 32 <= char_code <= 126:
+                        decoded += chr(char_code)
+            return decoded, False, 0, 1.0
         else:
-            decoded = "DECODE_FAIL"
-        accuracy = sum(1 for i in range(32) if bits_str[i] == codeword_str[i]) / 32.0
-        return decoded, ecc_valid, bitflips, accuracy
+            from roco_core import decode_from_bits
+            from roco_ecc import decode_with_ecc
+
+            bits_str = "".join(str(b) for b in bits)
+            codeword_str = bits_str[1:33]
+            codeword_bytes = int(codeword_str, 2).to_bytes(4, "big")
+            corrected_data, ecc_valid, bitflips = decode_with_ecc(codeword_bytes)
+
+            if corrected_data:
+                data_bits = int.from_bytes(corrected_data, "big") & 0xFFFF
+                decoded = decode_from_bits(data_bits)
+            else:
+                decoded = "DECODE_FAIL"
+
+            accuracy = (
+                sum(1 for i in range(32) if bits_str[i + 1] == codeword_str[i]) / 32.0
+            )
+            return decoded, ecc_valid, bitflips, accuracy
 
     def _inner_square_coords(
         self, iw: int, ih: int
