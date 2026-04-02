@@ -175,8 +175,20 @@ def handle_videoseal_watermark(cover_file, message):
             400,
         )
 
+    # Get viewframe parameters from request (same as WAM)
+    try:
+        x_percent = float(request.form.get("x_percent", 0.15))
+        y_percent = float(request.form.get("y_percent", 0.15))
+    except (ValueError, TypeError):
+        x_percent = y_percent = 0.15
+
+    # Use user's X,Y position for margin calculation (symmetric: margin = x = y)
+    margin_pct = x_percent  # Both x and y should be same for centered square
+
     image_bytes = cover_file.read()
-    img_bytes, binary, coords = vs_watermarker.embed_bytes(image_bytes, message)
+    img_bytes, binary, coords = vs_watermarker.embed_bytes(
+        image_bytes, message, margin_pct
+    )
 
     original_filename = secure_filename(cover_file.filename)
     filename_base, file_ext = os.path.splitext(original_filename)

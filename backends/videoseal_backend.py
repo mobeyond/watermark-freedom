@@ -227,7 +227,7 @@ class VideoSealBackend:
         return x, y, w, h, x / iw, y / ih, w / iw, h / ih
 
     def embed_bytes(
-        self, image_bytes: bytes, message: str
+        self, image_bytes: bytes, message: str, margin_pct: Optional[float] = None
     ) -> Tuple[bytes, str, Dict[str, Any]]:
         img_path = None
         script_path = None
@@ -238,7 +238,7 @@ class VideoSealBackend:
                 f.write(image_bytes)
                 img_path = f.name
 
-            margin = self._margin_percent
+            margin = margin_pct if margin_pct is not None else self._margin_percent
             script = _EMBED_SCRIPT.format(
                 site=PYTHON312_SITE,
                 img_path=img_path,
