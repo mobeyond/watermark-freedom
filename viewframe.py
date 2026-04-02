@@ -534,30 +534,31 @@ def draw_viewframe(
 def get_default_viewframe_coords(
     img_shape: Tuple[int, int], margin_pct: float = 0.15
 ) -> Dict[str, Any]:
-    """Get default viewframe coordinates using specified margin percentage.
+    """Get default viewframe coordinates.
 
-    Args:
-        img_shape: (height, width) of image
-        margin_pct: Margin as fraction (0.15 = 15%)
-
-    Returns:
-        Dict with normalized and pixel coordinates
+    For small images, margin is reduced to ensure minimum 200px viewframe for VideoSeal detection.
     """
     h, w = img_shape[:2]
     min_dim = min(h, w)
-    m = int(min_dim * margin_pct)
-    x = y = m
-    width = height = min_dim - 2 * m
+
+    requested_margin = int(min_dim * margin_pct)
+
+    MIN_VIEWFRAME_SIZE = 200
+    max_margin = max(0, (min_dim - MIN_VIEWFRAME_SIZE) // 2)
+    actual_margin = min(requested_margin, max_margin)
+
+    x = y = actual_margin
+    width = height = min_dim - 2 * actual_margin
 
     return {
         "x": x,
         "y": y,
         "width": width,
         "height": height,
-        "x_percent": x / w,
-        "y_percent": y / h,
-        "width_percent": width / w,
-        "height_percent": height / h,
+        "x_percent": x / w if w > 0 else 0,
+        "y_percent": y / h if h > 0 else 0,
+        "width_percent": width / w if w > 0 else 0,
+        "height_percent": height / h if h > 0 else 0,
         "margin_pct": margin_pct,
         "confidence": 1.0,
         "method": "default",
