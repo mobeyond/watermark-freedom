@@ -84,22 +84,41 @@ sys.path.insert(0, '/home/h/FLY/watermark-freedom')
 os.chdir('{site}')
 from PIL import Image
 from backends.videoseal_backend import VideoSealBackend
-from viewframe import get_default_viewframe_coords, crop_to_centered_square
+from viewframe import get_default_viewframe_coords, crop_to_centered_square, detect_viewframe
 import numpy as np
+import cv2
 
 # 1. Load and crop to centered square (same as embed)
 img = Image.open('{img_path}').convert('RGB')
 img_np = np.array(img)
 img_square = crop_to_centered_square(img_np)
 
-# 2. Get viewframe coordinates (same as embed)
-coords = get_default_viewframe_coords(img_square.shape[:2], margin_pct={margin})
+# 2. Try to detect actual viewframe from corner brackets
+img_bgr = cv2.cvtColor(img_square, cv2.COLOR_RGB2BGR)
+detected = detect_viewframe(img_bgr, method='diagonal')
 
-# 3. Extract viewframe region (same as embed)
+# 3. Use detected if valid, otherwise fallback to default margin
+if detected:
+    x, y, w, h = detected['x'], detected['y'], detected['width'], detected['height']
+    margin_pct = x / min(img_square.shape[:2])
+    coords = {
+        'x': x, 'y': y, 'width': w, 'height': h,
+        'x_percent': x / img_square.shape[1],
+        'y_percent': y / img_square.shape[0],
+        'width_percent': w / img_square.shape[1],
+        'height_percent': h / img_square.shape[0],
+        'margin_pct': margin_pct,
+        'detected': True
+    }
+else:
+    coords = get_default_viewframe_coords(img_square.shape[:2], margin_pct={margin})
+    coords['detected'] = False
+
+# 4. Extract viewframe region (same as embed)
 x, y, w, h = coords['x'], coords['y'], coords['width'], coords['height']
 viewframe_region = img_square[y:y+h, x:x+w]
 
-# 4. Verify ONLY on viewframe region
+# 5. Verify ONLY on viewframe region
 viewframe_pil = Image.fromarray(viewframe_region)
 wm = VideoSealBackend()
 result = wm.verify(viewframe_pil, {original_message})
