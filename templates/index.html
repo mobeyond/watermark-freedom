@@ -268,6 +268,9 @@
     </div>
 
     <script>
+        // Global flag to prevent recursion
+        let _isSyncing = false;
+        
         // Auto-calculate Width/Height from X,Y (centered square)
         function updatePercentSize() {
             const x = parseFloat(document.getElementById('x_percent').value) || 0;
@@ -295,39 +298,45 @@
         
         // Sync X and Y values when sync checkbox is checked
         function syncXY(input, type) {
-            const syncEnabled = document.getElementById('syncXY').checked;
-            if (!syncEnabled) return;
+            // Prevent recursion
+            if (_isSyncing) return;
             
-            // Prevent recursion - check if we're already syncing
-            if (input._syncing) return;
-            input._syncing = true;
+            const syncEnabled = document.getElementById('syncXY') ? document.getElementById('syncXY').checked : false;
+            if (!syncEnabled) {
+                // Still update width/height even if sync is off
+                if (type === 'percent') {
+                    updatePercentSize();
+                } else {
+                    updatePixelSize();
+                }
+                return;
+            }
+            
+            _isSyncing = true;
             
             const value = parseFloat(input.value) || 0;
             if (input.id === 'x_percent') {
                 document.getElementById('y_percent').value = value.toFixed(2);
+                updatePercentSize();
             } else if (input.id === 'y_percent') {
                 document.getElementById('x_percent').value = value.toFixed(2);
+                updatePercentSize();
             } else if (input.id === 'x_pixels') {
                 document.getElementById('y_pixels').value = Math.round(value);
+                updatePixelSize();
             } else if (input.id === 'y_pixels') {
                 document.getElementById('x_pixels').value = Math.round(value);
-            }
-            
-            // Also update width/height based on new X,Y
-            if (type === 'percent') {
-                updatePercentSize();
-            } else {
                 updatePixelSize();
             }
             
-            // Allow syncing again after a brief delay
-            setTimeout(() => { input._syncing = false; }, 10);
+            _isSyncing = false;
         }
         
         function toggleSyncXY() {
-            // When toggled on, immediately sync X and Y based on current coordinate system
-            const coordSystem = document.getElementById('coordinateSystem').value;
-            if (document.getElementById('syncXY').checked) {
+            const syncEnabled = document.getElementById('syncXY') ? document.getElementById('syncXY').checked : false;
+            const coordSystem = document.getElementById('coordinateSystem') ? document.getElementById('coordinateSystem').value : 'percent';
+            
+            if (syncEnabled) {
                 if (coordSystem === 'percent') {
                     const xVal = document.getElementById('x_percent').value;
                     document.getElementById('y_percent').value = xVal;
@@ -337,6 +346,24 @@
                     document.getElementById('y_pixels').value = xVal;
                     updatePixelSize();
                 }
+            }
+        }
+        
+        function toggleCoordinateSystem() {
+            const system = document.getElementById('coordinateSystem').value;
+            const percentInputs = document.getElementById('percentInputs');
+            const pixelInputs = document.getElementById('pixelInputs');
+            
+            if (system === 'percent') {
+                percentInputs.style.display = 'flex';
+                pixelInputs.style.display = 'none';
+                // Initialize width/height for percent view
+                updatePercentSize();
+            } else {
+                percentInputs.style.display = 'none';
+                pixelInputs.style.display = 'flex';
+                // Initialize width/height for pixel view
+                updatePixelSize();
             }
         }
         
@@ -381,26 +408,6 @@
                 helpText.innerHTML = 'Up to 3 characters. Allowed: <strong>A-Z, 4, 6, 7, 9, #</strong>';
             }
         }
-
-        function toggleCoordinateSystem() {
-            const system = document.getElementById('coordinateSystem').value;
-            const percentInputs = document.getElementById('percentInputs');
-            const pixelInputs = document.getElementById('pixelInputs');
-            
-            if (system === 'percent') {
-                percentInputs.style.display = 'flex';
-                pixelInputs.style.display = 'none';
-            } else {
-                percentInputs.style.display = 'none';
-                pixelInputs.style.display = 'flex';
-            }
-        }
-
-        // Initialize Width/Height on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            updatePercentSize();
-            updatePixelSize();
-        });
         
         document.getElementById('watermarkForm').onsubmit = async (e) => {
             e.preventDefault();
