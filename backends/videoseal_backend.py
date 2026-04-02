@@ -33,25 +33,36 @@ sys.path.insert(0, '/home/h/FLY/watermark-freedom')
 os.chdir('{site}')
 from PIL import Image
 from backends.videoseal_backend import VideoSealBackend
-from viewframe import get_default_viewframe_coords, draw_viewframe
+from viewframe import get_default_viewframe_coords, draw_viewframe, crop_to_centered_square
 import cv2, numpy as np
 
+# 1. Load and crop to centered square
 img = Image.open('{img_path}').convert('RGB')
+img_np = np.array(img)
+img_square = crop_to_centered_square(img_np)
+
+# 2. Get viewframe coordinates (15% margin)
+coords = get_default_viewframe_coords(img_square.shape[:2], margin_pct={margin})
+
+# 3. Extract viewframe region
+x, y, w, h = coords['x'], coords['y'], coords['width'], coords['height']
+viewframe_region = img_square[y:y+h, x:x+w]
+
+# 4. Embed watermark ONLY in viewframe region (VideoSeal accepts any size)
+viewframe_pil = Image.fromarray(viewframe_region)
 wm = VideoSealBackend()
-result, binary, _ = wm.embed(img, '{message}')
+watermarked_viewframe, binary, _ = wm.embed(viewframe_pil, '{message}')
 
-img_np = np.array(result)
-if len(img_np.shape) == 2:
-    img_np = np.stack([img_np]*3, axis=-1)
-elif img_np.shape[2] == 4:
-    img_np = img_np[:,:,:3]
-iw, ih = img_np.shape[1], img_np.shape[0]
+# 5. Place watermarked viewframe back into cropped image
+watermarked_np = np.array(watermarked_viewframe)
+result_np = img_square.copy()
+result_np[y:y+h, x:x+w] = watermarked_np
 
-img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-coords = get_default_viewframe_coords((ih, iw), margin_pct={margin})
-draw_viewframe(img_bgr, coords['x'], coords['y'], coords['width'], coords['height'], method='distinctive')
-
+# 6. Draw corner brackets on output
+img_bgr = cv2.cvtColor(result_np, cv2.COLOR_RGB2BGR)
+draw_viewframe(img_bgr, x, y, w, h, method='distinctive')
 img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
 out = Image.fromarray(img_rgb)
 buf = io.BytesIO()
 out.save(buf, format='PNG')
@@ -73,10 +84,25 @@ sys.path.insert(0, '/home/h/FLY/watermark-freedom')
 os.chdir('{site}')
 from PIL import Image
 from backends.videoseal_backend import VideoSealBackend
+from viewframe import get_default_viewframe_coords, crop_to_centered_square
+import numpy as np
 
+# 1. Load and crop to centered square (same as embed)
 img = Image.open('{img_path}').convert('RGB')
+img_np = np.array(img)
+img_square = crop_to_centered_square(img_np)
+
+# 2. Get viewframe coordinates (same as embed)
+coords = get_default_viewframe_coords(img_square.shape[:2], margin_pct={margin})
+
+# 3. Extract viewframe region (same as embed)
+x, y, w, h = coords['x'], coords['y'], coords['width'], coords['height']
+viewframe_region = img_square[y:y+h, x:x+w]
+
+# 4. Verify ONLY on viewframe region
+viewframe_pil = Image.fromarray(viewframe_region)
 wm = VideoSealBackend()
-result = wm.verify(img, {original_message})
+result = wm.verify(viewframe_pil, {original_message})
 
 print(json.dumps({{
     'readable': result.get('readable_message', ''),
@@ -84,7 +110,9 @@ print(json.dumps({{
     'corrected_bitflips': result.get('corrected_bitflips'),
     'bit_accuracy': result.get('bit_accuracy'),
     'binary_message': result.get('binary_message', ''),
-    'viewframe': result.get('viewframe')
+    'viewframe': {{'x': coords['x'], 'y': coords['y'], 'width': coords['width'], 'height': coords['height'],
+                  'x_percent': coords['x_percent'], 'y_percent': coords['y_percent'],
+                  'width_percent': coords['width_percent'], 'height_percent': coords['height_percent']}}
 }}))
 """
 
@@ -231,6 +259,7 @@ class VideoSealBackend:
                 site=PYTHON312_SITE,
                 img_path=img_path,
                 original_message=repr(original_message),
+                margin=self._margin_percent,
             )
             with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
                 f.write(script)
