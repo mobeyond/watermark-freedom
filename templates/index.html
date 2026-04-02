@@ -245,8 +245,21 @@
             <h2>Verify Watermark</h2>
             <form id="verifyForm" enctype="multipart/form-data">
                 <div class="form-group">
+                    <label>Backend:</label>
+                    <select id="verifyBackend" name="backend">
+                        <option value="videoseal">VideoSeal (256-bit, ROCO/ASCII)</option>
+                        <option value="wam">WAM (32-bit, ROCO)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
                     <label for="watermarked">Watermarked Image:</label>
                     <input type="file" id="watermarked" name="watermarked" accept="image/*" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="original_message">Original Message (optional):</label>
+                    <input type="text" id="original_message" name="original_message" placeholder="Enter the original message">
                 </div>
                 
                 <button type="submit">Verify Watermark</button>
@@ -409,7 +422,8 @@
             e.preventDefault();
             const formData = new FormData(e.target);
             
-            const backend = document.getElementById('backend').value;
+            // Use verify-specific backend selector
+            const backend = document.getElementById('verifyBackend').value;
             formData.append('backend', backend);
             
             // Read all coordinate and method settings from the form and append them
