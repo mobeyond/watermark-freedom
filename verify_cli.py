@@ -3,10 +3,13 @@
 Verify Watermark CLI Tool
 =========================
 Verifies watermark in all images under a given directory.
-Output format matches the app.py "Verify Watermark" module.
+
+Supports two backends:
+- VideoSeal: Facebook's VideoSeal model (supports ROCO 3-char and ROCO32 4-char)
+- Custom (WAM): WAM-based watermarking (ROCO 3-char only)
 
 Usage:
-    python verify_cli.py <directory_path> [--original_message <msg>] [--show-image]
+    python verify_cli.py <directory_path> [--backend videoseal|custom] [--encoding roco|roco32]
 """
 
 import sys
@@ -15,13 +18,12 @@ import argparse
 import warnings
 from pathlib import Path
 
-import cv2
-import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import WatermarkManager
+from backends.videoseal_backend import VideoSealBackend
+from backends.custom_model_backend import CustomModelBackend
 
 # Suppress small viewframe warnings for cleaner output
 warnings.filterwarnings(
@@ -45,7 +47,10 @@ def format_bit_accuracy(accuracy):
 
 def format_percentage(value, decimals=2):
     """Format a value as percentage."""
-    return f"{value * 100:.{decimals}f}%"
+    pct = value * 100
+    if pct < 0.01:
+        return f"<0.01%"
+    return f"{pct:.{decimals}f}%"
 
 
 def format_viewframe(viewframe: dict) -> str:
@@ -63,37 +68,11 @@ def format_viewframe(viewframe: dict) -> str:
     y_pct = viewframe.get("y_percent", y)
 
     return (
-        f"  Viewframe: ({int(x)}, {int(y)}) pixels, "
+        f"Viewframe: ({int(x)}, {int(y)}) px, "
         f"size {int(width)}x{int(height)}, "
-        f"at ({format_percentage(x_pct, 1)}, {format_percentage(y_pct, 1)}) of image, "
-        f"Area: {format_percentage(viewframe.get('ratio', 0), 1)} of image"
+        f"at ({format_percentage(x_pct, 1)}, {format_percentage(y_pct, 1)}), "
+        f"Area: {format_percentage(viewframe.get('ratio', 0), 1)}"
     )
-
-
-def verify_image(image_path, manager: WatermarkManager, original_message=None) -> dict:
-    """
-    Verify watermark in a single image.
-
-    Returns dict matching app.py verification output format.
-    """
-    result = manager.verify(str(image_path), original_message)
-
-    # Format viewframe info
-    vf_info = format_viewframe(result.get("viewframe", {}))
-
-    # Format bit accuracy
-    bit_accuracy = result.get("bit_accuracy")
-    acc_str = format_bit_accuracy(bit_accuracy)
-
-    return {
-        "filename": os.path.basename(image_path),
-        "readable_message": result.get("readable_message", "N/A"),
-        "bit_error_rate": result.get("bit_error_rate_percent", "N/A"),
-        "bitflips": result.get("corrected_bitflips", "N/A"),
-        "ecc_valid": result.get("ecc_valid", False),
-        "bit_accuracy": acc_str,
-        "viewframe": vf_info,
-    }
 
 
 def main():
@@ -104,11 +83,27 @@ def main():
         "directory", type=str, help="Directory containing images to verify"
     )
     parser.add_argument(
+        "--backend",
+        "-b",
+        type=str,
+        default="videoseal",
+        choices=["videoseal", "custom"],
+        help='Backend to use: "videoseal" (default) or "custom" (WAM)',
+    )
+    parser.add_argument(
+        "--encoding",
+        "-e",
+        type=str,
+        default="roco",
+        choices=["roco", "roco32"],
+        help='Encoding: "roco" (3-char, 32-bit) or "roco32" (4-char, 256-bit)',
+    )
+    parser.add_argument(
         "--original-message",
         "-m",
         type=str,
         default=None,
-        help='Original message for comparison (e.g., "ABC")',
+        help='Original message for comparison (e.g., "ABC" or "ABCD")',
     )
     parser.add_argument(
         "--show-image",
@@ -133,6 +128,12 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate encoding-backend combination
+    if args.backend == "custom" and args.encoding == "roco32":
+        print("Error: ROCO32 encoding is only available with VideoSeal backend")
+        print("Use --backend videoseal --encoding roco32 for 4-char messages")
+        sys.exit(1)
+
     if args.warnings:
         enable_warnings()
 
@@ -145,8 +146,9 @@ def main():
         print(f"Error: Not a directory: {directory}")
         sys.exit(1)
 
-    # Initialize manager
-    manager = WatermarkManager()
+    # Initialize backends
+    vs_watermarker = VideoSealBackend()
+    custom_watermarker = CustomModelBackend()
 
     # Find all image files
     image_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".gif", ".webp"}
@@ -167,6 +169,8 @@ def main():
     print(f"{'=' * 60}")
     print(f"Directory: {directory}")
     print(f"Files to verify: {len(image_files)}")
+    print(f"Backend: {args.backend}")
+    print(f"Encoding: {args.encoding}")
     if args.original_message:
         print(f"Original message: {args.original_message}")
     print(f"ECC threshold: {args.threshold}")
@@ -178,10 +182,31 @@ def main():
 
     for img_path in image_files:
         try:
-            result = verify_image(img_path, manager, args.original_message)
-            results.append({"filename": result["filename"], **result})
+            # Read image as bytes for backend verification
+            with open(img_path, "rb") as f:
+                image_bytes = f.read()
 
-            if result["ecc_valid"] and result["ecc_valid"] >= args.threshold:
+            if args.backend == "videoseal":
+                if args.encoding == "roco32":
+                    result = vs_watermarker.verify_bytes(image_bytes, args.original_message)
+                else:
+                    result = vs_watermarker.verify_bytes_roco(image_bytes, args.original_message)
+            else:  # custom backend
+                result = custom_watermarker.verify_bytes_roco(image_bytes, args.original_message)
+
+            # Format result for output
+            result_dict = {
+                "filename": img_path.name,
+                "readable_message": result.get("readable", "N/A"),
+                "bit_error_rate": result.get("bit_accuracy", "N/A"),
+                "bitflips": result.get("corrected_bitflips", "N/A"),
+                "ecc_valid": result.get("ecc_valid", False),
+                "bit_accuracy": format_bit_accuracy(result.get("bit_accuracy")),
+                "viewframe": format_viewframe(result.get("viewframe", {})),
+            }
+            results.append(result_dict)
+
+            if result.get("ecc_valid"):
                 success_count += 1
             else:
                 fail_count += 1

@@ -28,6 +28,9 @@ from viewframe import (
     get_corner_color,
     SUPPORTED_BRACKET_METHODS,
     DEFAULT_BRACKET_METHOD,
+    get_default_viewframe_coords,
+    calculate_line_thickness,
+    calculate_viewframe_padding,
 )
 from viewframe_detector import ViewframeDetector
 from viewframe_config import viewframe_config
@@ -35,11 +38,12 @@ from viewframe_config import viewframe_config
 # Constants
 WAM_INPUT_SIZE = 256  # WAM model trained on 256x256
 MIN_VIEWFRAME_SIZE = 180  # Minimum viewframe for reliable watermarking
-DEFAULT_MARGIN_PERCENT = 0.15  # 15% margin for centered square
+DEFAULT_MARGIN_PERCENT = 0.10  # 10% margin for centered square
 LINE_THICKNESS = 3  # Corner bracket line thickness
 CORNER_LENGTH_RATIO = 0.15  # Corner bracket length as fraction of region
 DEFAULT_SCALING_W = 2.0  # Default watermark strength
 LOWER_SCALING_W = 2.0  # Same as default - large viewframes need full strength
+VIEWFRAME_PADDING = 4  # Pixels to pad from viewframe edge to exclude bracket arms
 
 
 @contextmanager
@@ -106,8 +110,12 @@ class WatermarkManager:
             height = int(params["height_percent"] * h)
         else:  # corners mode (default)
             margin = int(min(w, h) * margin_percent)
+            raw_width = min(w, h) - 2 * margin
+            # Ensure odd side length for symmetric alignment
+            if raw_width % 2 == 0:
+                raw_width += 1
+            width = height = raw_width
             x = y = margin
-            width = height = min(w, h) - 2 * margin
         return x, y, width, height
 
     def _detect_viewframe(
@@ -134,13 +142,12 @@ class WatermarkManager:
 
         This ensures that when detection fails, the fallback region matches
         the default embedding region (centered square with margin).
+
+        Uses get_default_viewframe_coords() for consistent behavior across
+        the codebase.
         """
-        margin = int(min(h, w) * margin_percent)
-        x = y = margin
-        size = min(h, w) - 2 * margin
-        # Ensure positive size
-        size = max(1, size)
-        return x, y, size, size
+        coords = get_default_viewframe_coords((h, w), margin_percent)
+        return coords["x"], coords["y"], coords["width"], coords["height"]
 
     def _recommend_scaling_w(self, viewframe_size: int) -> float:
         """Recommend scaling_w based on viewframe size.
@@ -205,8 +212,20 @@ class WatermarkManager:
             "scaling_w": float(scaling_w),
         }
 
-        # 1. CROP to region
-        cropped = img_pt[:, :, y : y + height, x : x + width]
+        # Calculate dynamic padding based on image size
+        dynamic_padding = calculate_viewframe_padding(min(h, w))
+
+        # 1. CROP to region (with padding to exclude bracket arms)
+        x_padded = x + dynamic_padding
+        y_padded = y + dynamic_padding
+        width_padded = width - 2 * dynamic_padding
+        height_padded = height - 2 * dynamic_padding
+        cropped = img_pt[
+            :,
+            :,
+            y_padded : y_padded + height_padded,
+            x_padded : x_padded + width_padded,
+        ]
 
         # 2. RESIZE to WAM input size
         cropped_256 = torch.nn.functional.interpolate(
@@ -228,17 +247,22 @@ class WatermarkManager:
         finally:
             self.wam.scaling_w = original_scaling_w
 
-        # 4. RESIZE back to viewframe size
+        # 4. RESIZE back to padded viewframe size
         watermarked_crop = torch.nn.functional.interpolate(
             outputs["imgs_w"],
-            size=(height, width),
+            size=(height_padded, width_padded),
             mode="bilinear",
             align_corners=False,
         )
 
-        # 5. PLACE back into original image
+        # 5. PLACE back into original image (with padding)
         img_w = img_pt.clone()
-        img_w[:, :, y : y + height, x : x + width] = watermarked_crop
+        img_w[
+            :,
+            :,
+            y_padded : y_padded + height_padded,
+            x_padded : x_padded + width_padded,
+        ] = watermarked_crop
 
         # 6. Draw corner brackets
         img_np = (
@@ -248,7 +272,8 @@ class WatermarkManager:
         img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
         corner_length = int(min(width, height) * CORNER_LENGTH_RATIO)
-        line_thickness = max(2, int(min(width, height) * 0.012))
+        # Line thickness based on image size (after crop_to_square)
+        line_thickness = calculate_line_thickness(min(h, w))
 
         draw_corner_brackets(
             img_bgr,
@@ -297,8 +322,20 @@ class WatermarkManager:
                 UserWarning,
             )
 
-        # Crop and resize for WAM
-        cropped = img_pt[:, :, y : y + height, x : x + width]
+        # Calculate dynamic padding based on image size
+        dynamic_padding = calculate_viewframe_padding(min(h, w))
+
+        # Crop and resize for WAM (with padding to exclude bracket arms)
+        x_padded = x + dynamic_padding
+        y_padded = y + dynamic_padding
+        width_padded = width - 2 * dynamic_padding
+        height_padded = height - 2 * dynamic_padding
+        cropped = img_pt[
+            :,
+            :,
+            y_padded : y_padded + height_padded,
+            x_padded : x_padded + width_padded,
+        ]
         cropped_256 = torch.nn.functional.interpolate(
             cropped,
             size=(WAM_INPUT_SIZE, WAM_INPUT_SIZE),
@@ -362,7 +399,20 @@ class WatermarkManager:
         else:
             x, y, width, height = self._get_fallback_viewframe(h, w)
 
-        cropped = img_tensor[:, :, y : y + height, x : x + width]
+        # Calculate dynamic padding based on image size
+        dynamic_padding = calculate_viewframe_padding(min(h, w))
+
+        # Crop with padding to exclude bracket arms
+        x_padded = x + dynamic_padding
+        y_padded = y + dynamic_padding
+        width_padded = width - 2 * dynamic_padding
+        height_padded = height - 2 * dynamic_padding
+        cropped = img_tensor[
+            :,
+            :,
+            y_padded : y_padded + height_padded,
+            x_padded : x_padded + width_padded,
+        ]
         cropped_256 = torch.nn.functional.interpolate(
             cropped,
             size=(WAM_INPUT_SIZE, WAM_INPUT_SIZE),

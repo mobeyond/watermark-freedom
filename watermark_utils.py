@@ -3,11 +3,18 @@ import numpy as np
 from PIL import Image
 import torch
 import cv2
-from flask import jsonify
 from typing import Tuple
 
 from roco_core import encode_to_bits, decode_from_bits
 from roco_ecc import encode_with_ecc, decode_with_ecc
+
+# Optional Flask import - only needed for Flask API usage
+try:
+    from flask import jsonify
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    jsonify = None
 
 
 def load_image(image_file):
@@ -17,14 +24,29 @@ def load_image(image_file):
 
 
 def crop_to_centered_square(image):
-    """Returns the largest centered square crop from the input image.
-    Works with both PIL Image and numpy arrays (cv2 format)."""
+    """Returns the largest centered square crop with ODD side length.
+
+    Works with both PIL Image and numpy arrays (cv2 format).
+
+    Center preservation:
+    - If original min_dim is ODD: crops to that size (perfect center alignment)
+    - If original min_dim is EVEN: crops to (min_dim - 1), center preserved within crop
+
+    The original center point is always contained within the cropped region.
+    """
     if isinstance(image, np.ndarray):
         h, w = image.shape[:2]
     else:
         w, h = image.size
 
     min_dim = min(h, w)
+
+    # Ensure odd side length for proper center pixel alignment
+    if min_dim % 2 == 0:
+        min_dim -= 1
+
+    # Calculate offsets to crop from each side
+    # Extra pixel (if any) goes to bottom/right to preserve center
     top = (h - min_dim) // 2
     left = (w - min_dim) // 2
 
@@ -85,11 +107,21 @@ def validate_percentage_coords(x_percent, y_percent, width_percent, height_perce
 
 
 def create_error_response(message, status_code=400, additional_info=None):
-    """Create a standardized error response."""
+    """Create a standardized error response.
+
+    If Flask is available, returns a Flask response tuple.
+    If Flask is not available, returns a dict for use in non-Flask contexts.
+    """
     response = {"error": message}
     if additional_info:
         response.update(additional_info)
-    return jsonify(response), status_code
+
+    if FLASK_AVAILABLE and jsonify is not None:
+        return jsonify(response), status_code
+    else:
+        # Return dict for non-Flask usage (e.g., standalone scripts, tests)
+        response["status_code"] = status_code
+        return response
 
 
 def roco_encode_to_binary_tensor(payload: str) -> torch.Tensor:

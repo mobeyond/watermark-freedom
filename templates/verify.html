@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Verify Watermark</title>
+    <style>
+        html { font-size: 16px; }
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        h1 { font-size: 2.5rem; color: #ffffff; }
+        h2 { font-size: 2rem; color: #ffffff; }
+        h3 { font-size: 1.5rem; color: #ffffff; }
+        .form-group { margin-bottom: 15px; display: flex; flex-direction: column; }
+        label { display: block; margin-bottom: 5px; color: #e0e0e0; }
+        input[type="file"], select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            background-color: #333;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #28a745;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background-color: #218838; }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            display: none;
+            background-color: #1e1e1e;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .help-text { font-size: 0.9em; color: #aaa; }
+    </style>
+</head>
+<body>
+    <h1>Verify Watermark</h1>
+    <p><a href="http://localhost:5000" style="color: #007bff;">← Go to Add Watermark</a></p>
+
+    <div class="section">
+        <h2>Verify Watermark</h2>
+        <form id="verifyForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label>Backend:</label>
+                <select id="verifyBackend" name="backend">
+                    <option value="videoseal">VideoSeal (ROCO encoding)</option>
+                    <option value="custom">Custom Model (ROCO encoding)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Encoding:</label>
+                <select id="verifyEncoding" name="encoding">
+                    <option value="roco">ROCO (3-char, robust)</option>
+                    <option value="roco32">ROCO32 (4-char, advanced)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="watermarked">Watermarked Image:</label>
+                <input type="file" id="watermarked" name="watermarked" accept="image/*" required>
+            </div>
+
+            <p class="help-text">
+                <strong>Automatic detection:</strong> Viewframe and watermark will be auto-detected from the image.
+                No manual parameters needed for verification.
+            </p>
+
+            <button type="submit">Verify Watermark</button>
+        </form>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        document.getElementById('verifyForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+
+            const backend = document.getElementById('verifyBackend').value;
+            formData.append('backend', backend);
+
+            if (backend === 'videoseal') {
+                const encoding = document.getElementById('verifyEncoding').value;
+                formData.append('encoding', encoding);
+            } else if (backend === 'custom') {
+                formData.append('encoding', 'roco');
+            }
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<p>Verifying...</p>';
+
+            try {
+                const response = await fetch('/verify', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    let viewframeHtml = '';
+                    if (result.viewframe) {
+                        const vf = result.viewframe;
+                        const areaRatio = (vf.width_percent * vf.height_percent * 100).toFixed(1);
+                        viewframeHtml = `
+                            <h4>Detected Viewframe:</h4>
+                            <p><strong>Position:</strong> (${vf.x}, ${vf.y}) pixels</p>
+                            <p><strong>Size:</strong> ${vf.width} x ${vf.height} pixels</p>
+                            <p><strong>Position (%):</strong> (${(vf.x_percent * 100).toFixed(1)}%, ${(vf.y_percent * 100).toFixed(1)}%)</p>
+                            <p><strong>Size (%):</strong> ${(vf.width_percent * 100).toFixed(1)}% x ${(vf.height_percent * 100).toFixed(1)}%</p>
+                            <p><strong>Area Ratio:</strong> ${areaRatio}% of image</p>
+                        `;
+                    }
+                    
+                    resultDiv.innerHTML = `
+                        <h3>Verification Results:</h3>
+                        ${viewframeHtml}
+                        <p><strong>File:</strong> ${result.filename}</p>
+                        <p><strong>Decoded Message:</strong> ${result.readable_message}</p>
+                        <p><strong>ECC Valid:</strong> ${result.ecc_valid}</p>
+                        <p><strong>Corrected Bitflips:</strong> ${result.corrected_bitflips}</p>
+                        <p><strong>Bit Accuracy:</strong> ${result.bit_accuracy}</p>
+                        <p><strong>Raw Binary Message:</strong> ${result.raw_binary_message}</p>
+                    `;
+                    if (result.bit_accuracy_vs_original) {
+                        resultDiv.innerHTML += `<p><strong>Bit Accuracy (vs. Original):</strong> ${result.bit_accuracy_vs_original}</p>`;
+                    }
+                } else {
+                    const error = await response.json();
+                    resultDiv.innerHTML = `<p style="color: red;">Error: ${error.error}</p>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        };
+    </script>
+</body>
+</html>

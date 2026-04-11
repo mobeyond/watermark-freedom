@@ -2,10 +2,10 @@ import numpy as np
 import cv2
 from typing import Optional, Tuple, Dict, Any
 
-
 # Special pixel values for brackets - unlikely in natural images
-BRACKET_BRIGHT = 254
-BRACKET_DARK = 1
+# Using distinctive RGB values that won't be affected by watermark embedding
+BRACKET_BRIGHT = (255, 128, 255)  # Magenta - distinctive, unlikely in natural images
+BRACKET_DARK = (0, 255, 0)  # Pure green - distinctive, unlikely to be used by watermark
 
 # Supported bracket overlay methods
 BRACKET_METHOD_DISTINCTIVE = "distinctive"  # Uses pixel values 254/1
@@ -14,70 +14,76 @@ BRACKET_METHOD_ALPHA = "alpha"  # Uses alpha blending
 SUPPORTED_BRACKET_METHODS = [BRACKET_METHOD_DISTINCTIVE, BRACKET_METHOD_ALPHA]
 DEFAULT_BRACKET_METHOD = BRACKET_METHOD_DISTINCTIVE
 
+# Size threshold for line thickness calculation
+SIZE_THRESHOLD_150 = 150  # Images <=150px get thinner lines
 
-def crop_to_centered_square(img: np.ndarray) -> np.ndarray:
-    """Crop image to centered square before viewframe processing.
+
+def calculate_line_thickness(min_dim: int) -> int:
+    """Calculate bracket line thickness based on image size.
+
+    cv2.line draws thicker lines due to antialiasing:
+    - thickness=1 → actual 1px wide
+    - thickness=2 → actual 3px wide
 
     Args:
-        img: BGR image (H, W, 3) or grayscale (H, W)
+        min_dim: Minimum dimension of the image (width or height)
 
     Returns:
-        Centered square image with min(H, W) dimensions
+        Line thickness parameter for cv2.line (1 for small images, 2 for larger)
     """
-    h, w = img.shape[:2]
-    min_dim = min(h, w)
-    # Center crop
-    if h > w:
-        y_offset = (h - w) // 2
-        return img[y_offset : y_offset + w, :]
-    elif w > h:
-        x_offset = (w - h) // 2
-        return img[:, x_offset : x_offset + h]
-    return img  # Already square
+    return 1 if min_dim <= SIZE_THRESHOLD_150 else 2
+
+
+def calculate_viewframe_padding(min_dim: int) -> int:
+    """Calculate padding to exclude bracket arms from viewframe region.
+
+    Padding should match the actual bracket arm thickness to ensure
+    the extracted viewframe region matches pixel-to-pixel.
+
+    Args:
+        min_dim: Minimum dimension of the image (width or height)
+
+    Returns:
+        Padding in pixels (matches calculate_line_thickness)
+    """
+    return calculate_line_thickness(min_dim)
+
+
+# Import ViewframeDetector for delegation
+from viewframe_detector import ViewframeDetector
+
+# Import crop_to_centered_square from utils to avoid duplication
+from watermark_utils import crop_to_centered_square
 
 
 def detect_viewframe(
     img: np.ndarray, method: str = "diagonal"
 ) -> Optional[Dict[str, Any]]:
-    """Detect viewframe from image with VALIDATION.
+    """Detect viewframe from image by delegating to ViewframeDetector.
 
-    Detection validation criteria (ALL must pass):
-    1. Exactly 4 corners found (tl, tr, bl, br)
-    2. Detected square is centered (geometric center aligns with image center, tolerance 10%)
-    3. Margin ratio is between 5% and 25%
-
-    If ANY validation fails, returns None (caller should use default 15% margin).
+    This is a thin wrapper around ViewframeDetector for convenience.
+    The actual detection logic lives in viewframe_detector.py to avoid
+    code duplication.
 
     Args:
         img: BGR image (should be pre-processed to square first)
         method: Detection algorithm ('diagonal', 'direct', 'adaptive')
 
     Returns:
-        Dict with keys: x, y, width, height, x_percent, y_percent, width_percent, height_percent, margin_pct, confidence, method
+        Dict with keys: x, y, width, height, x_percent, y_percent,
+        width_percent, height_percent, margin_pct, confidence, method
         OR None if detection fails validation
     """
     h, w = img.shape[:2]
 
-    if len(img.shape) == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img
-
-    if method == "diagonal":
-        result = _detect_diagonal(gray, h, w)
-    elif method == "direct":
-        result = _detect_direct(gray, h, w)
-    elif method == "adaptive":
-        result = _detect_adaptive(gray, h, w)
-    else:
-        return None
+    # Create detector and detect viewframe
+    detector = ViewframeDetector()
+    result = detector.detect(img, method=method)
 
     if result is None:
         return None
 
-    if not _validate_detection(result, h, w):
-        return None
-
+    # Add additional fields that were previously computed here
     result["x_percent"] = result["x"] / w
     result["y_percent"] = result["y"] / h
     result["width_percent"] = result["width"] / w
@@ -86,248 +92,10 @@ def detect_viewframe(
     margin_pct = result["y"] / min(h, w)
     result["margin_pct"] = margin_pct
 
+    # Include the detected line_thickness for padding calculation
+    result["detected_line_thickness"] = detector.line_thickness
+
     return result
-
-
-def _detect_diagonal(gray: np.ndarray, h: int, w: int) -> Optional[Dict[str, Any]]:
-    bright_mask = gray == BRACKET_BRIGHT
-    dark_mask = gray == BRACKET_DARK
-    bracket_mask = bright_mask | dark_mask
-    binary = (bracket_mask * 255).astype(np.uint8)
-
-    kernel = np.ones((3, 3), np.uint8)
-    dilated = cv2.dilate(binary, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) < 4:
-        return None
-
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    contours = [c for c in contours if cv2.contourArea(c) >= 100]
-
-    if len(contours) < 4:
-        return None
-
-    mid_h, mid_w = h // 2, w // 2
-    corner_contours = []
-
-    for cnt in contours:
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        cx, cy = x + cw // 2, y + ch // 2
-
-        if cx < mid_w and cy < mid_h:
-            corner_contours.append(("tl", x, y, cw, ch))
-        elif cx > mid_w and cy < mid_h:
-            corner_contours.append(("tr", x, y, cw, ch))
-        elif cx < mid_w and cy > mid_h:
-            corner_contours.append(("bl", x, y, cw, ch))
-        elif cx > mid_w and cy > mid_h:
-            corner_contours.append(("br", x, y, cw, ch))
-
-    if len(corner_contours) < 4:
-        return None
-
-    best = {}
-    for name, x, y, cw, ch in corner_contours:
-        if name not in best:
-            best[name] = (x, y, cw, ch)
-
-    if len(best) < 4:
-        return None
-
-    tl_x, tl_y, _, _ = best["tl"]
-    tr_x, tr_y, tr_w, _ = best["tr"]
-    bl_x, bl_y, _, bl_h = best["bl"]
-
-    offset = 3
-    x = tl_x + offset
-    y = tl_y + offset
-    width = (tr_x + tr_w) - tl_x - 2 * offset
-    height = (bl_y + bl_h) - tl_y - 2 * offset
-
-    min_dim = min(width, height)
-    width = height = min_dim
-
-    return {
-        "x": max(0, x),
-        "y": max(0, y),
-        "width": max(0, width),
-        "height": max(0, height),
-        "confidence": 1.0,
-        "method": "diagonal",
-    }
-
-
-def _detect_direct(gray: np.ndarray, h: int, w: int) -> Optional[Dict[str, Any]]:
-    bright_mask = gray == BRACKET_BRIGHT
-    dark_mask = gray == BRACKET_DARK
-    combined_mask = bright_mask | dark_mask
-    binary = (combined_mask * 255).astype(np.uint8)
-
-    kernel = np.ones((3, 3), np.uint8)
-    dilated = cv2.dilate(binary, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) < 4:
-        return None
-
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    contours = [c for c in contours if cv2.contourArea(c) >= 100]
-
-    if len(contours) < 4:
-        return None
-
-    mid_h, mid_w = h // 2, w // 2
-    corner_contours = []
-
-    for cnt in contours:
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        cx, cy = x + cw // 2, y + ch // 2
-
-        if cx < mid_w and cy < mid_h:
-            corner_contours.append(("tl", x, y, cw, ch))
-        elif cx > mid_w and cy < mid_h:
-            corner_contours.append(("tr", x, y, cw, ch))
-        elif cx < mid_w and cy > mid_h:
-            corner_contours.append(("bl", x, y, cw, ch))
-        elif cx > mid_w and cy > mid_h:
-            corner_contours.append(("br", x, y, cw, ch))
-
-    if len(corner_contours) < 4:
-        return None
-
-    best = {}
-    for name, x, y, cw, ch in corner_contours:
-        if name not in best:
-            best[name] = (x, y, cw, ch)
-
-    if len(best) < 4:
-        return None
-
-    tl_x, tl_y, _, _ = best["tl"]
-    tr_x, tr_y, tr_w, _ = best["tr"]
-    bl_x, bl_y, _, bl_h = best["bl"]
-
-    offset = 3
-    x = tl_x + offset
-    y = tl_y + offset
-    width = (tr_x + tr_w) - tl_x - 2 * offset
-    height = (bl_y + bl_h) - tl_y - 2 * offset
-
-    min_dim = min(width, height)
-    width = height = min_dim
-
-    return {
-        "x": max(0, x),
-        "y": max(0, y),
-        "width": max(0, width),
-        "height": max(0, height),
-        "confidence": 1.0,
-        "method": "direct",
-    }
-
-
-def _detect_adaptive(gray: np.ndarray, h: int, w: int) -> Optional[Dict[str, Any]]:
-    bright_mask = gray == BRACKET_BRIGHT
-    dark_mask = gray == BRACKET_DARK
-    combined_mask = bright_mask | dark_mask
-    binary = (combined_mask * 255).astype(np.uint8)
-
-    kernel = np.ones((3, 3), np.uint8)
-    dilated = cv2.dilate(binary, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) < 4:
-        return None
-
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    contours = [c for c in contours if cv2.contourArea(c) >= 100]
-
-    if len(contours) < 4:
-        return None
-
-    mid_h, mid_w = h // 2, w // 2
-    corner_contours = []
-
-    for cnt in contours:
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        cx, cy = x + cw // 2, y + ch // 2
-
-        if cx < mid_w and cy < mid_h:
-            corner_contours.append(("tl", x, y, cw, ch))
-        elif cx > mid_w and cy < mid_h:
-            corner_contours.append(("tr", x, y, cw, ch))
-        elif cx < mid_w and cy > mid_h:
-            corner_contours.append(("bl", x, y, cw, ch))
-        elif cx > mid_w and cy > mid_h:
-            corner_contours.append(("br", x, y, cw, ch))
-
-    if len(corner_contours) < 4:
-        return None
-
-    best = {}
-    for name, x, y, cw, ch in corner_contours:
-        if name not in best:
-            best[name] = (x, y, cw, ch)
-
-    if len(best) < 4:
-        return None
-
-    tl_x, tl_y, _, _ = best["tl"]
-    tr_x, tr_y, tr_w, _ = best["tr"]
-    bl_x, bl_y, _, bl_h = best["bl"]
-
-    offset = 3
-    x = tl_x + offset
-    y = tl_y + offset
-    width = (tr_x + tr_w) - tl_x - 2 * offset
-    height = (bl_y + bl_h) - tl_y - 2 * offset
-
-    min_dim = min(width, height)
-    width = height = min_dim
-
-    return {
-        "x": max(0, x),
-        "y": max(0, y),
-        "width": max(0, width),
-        "height": max(0, height),
-        "confidence": 0.7,
-        "method": "adaptive",
-    }
-
-
-def _validate_detection(result: Dict[str, Any], h: int, w: int) -> bool:
-    x, y = result["x"], result["y"]
-    width, height = result["width"], result["height"]
-
-    if width <= 0 or height <= 0:
-        return False
-    if x < 0 or y < 0:
-        return False
-    if x + width > w or y + height > h:
-        return False
-    if width < 10 or height < 10:
-        return False
-    if width > w * 0.95 or height > h * 0.95:
-        return False
-
-    image_center_x = w / 2
-    image_center_y = h / 2
-    detected_center_x = x + width / 2
-    detected_center_y = y + height / 2
-
-    center_tolerance = 0.10
-    x_center_delta = abs(detected_center_x - image_center_x) / w
-    y_center_delta = abs(detected_center_y - image_center_y) / h
-    if x_center_delta > center_tolerance or y_center_delta > center_tolerance:
-        return False
-
-    min_dim = min(h, w)
-    margin_pct = y / min_dim
-    if not (0.05 <= margin_pct <= 0.25):
-        return False
-
-    return True
 
 
 def get_corner_color(image, pt, length):
@@ -339,41 +107,46 @@ def get_corner_color(image, pt, length):
     region = image[y0:y1, x0:x1]
     gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
     mean = np.mean(gray)
-    return (
-        (BRACKET_DARK, BRACKET_DARK, BRACKET_DARK)
-        if mean > 128
-        else (BRACKET_BRIGHT, BRACKET_BRIGHT, BRACKET_BRIGHT)
-    )
+    return BRACKET_DARK if mean > 128 else BRACKET_BRIGHT
 
 
 def draw_transparent_corner_brackets(
     img, x, y, width, height, corner_length, line_thickness, alpha=0.7
 ):
-    """Draw corner brackets with distinctive pixel values.
+    """Draw corner brackets AT viewframe corners, arms extending INWARD.
 
-    Uses pixel values 1 (black) and 254 (white) which are distinctive.
+    Uses distinctive pixel values for reliable detection.
     The 'alpha' parameter is kept for API compatibility but lines are solid
     for reliable detection.
 
+    Bracket positions (AT viewframe corners, arms extending INWARD toward center):
+    - Top-Left: corner at (x, y), arms extend to (x+corner_length, y) and (x, y+corner_length)
+    - Top-Right: corner at (x+width, y), arms extend to (x+width-corner_length, y) and (x+width, y+corner_length)
+    - Bottom-Left: corner at (x, y+height), arms extend to (x+corner_length, y+height) and (x, y+height-corner_length)
+    - Bottom-Right: corner at (x+width, y+height), arms extend to (x+width-corner_length, y+height) and (x+width, y+height-corner_length)
+
+    The bracket corner (vertex) IS the viewframe corner.
+    The arms extend INWARD (toward the viewframe center), marking the boundary.
+
     Args:
         img: BGR image (modified in place)
-        x, y: Top-left corner of viewframe
+        x, y: Top-left corner of viewframe (also bracket corner position)
         width, height: Viewframe dimensions
         corner_length: Length of each bracket arm
         line_thickness: Line thickness
         alpha: Opacity (kept for compatibility, currently draws solid)
     """
-    # Top-left corner
+    # Top-left corner (at (x,y), arms extend RIGHT and DOWN INTO viewframe)
     color = get_corner_color(img, (x, y), corner_length)
     cv2.line(img, (x, y), (x + corner_length, y), color, line_thickness)
     cv2.line(img, (x, y), (x, y + corner_length), color, line_thickness)
 
-    # Top-right corner
+    # Top-right corner (at (x+width, y), arms extend LEFT and DOWN INTO viewframe)
     color = get_corner_color(img, (x + width - corner_length, y), corner_length)
     cv2.line(img, (x + width, y), (x + width - corner_length, y), color, line_thickness)
     cv2.line(img, (x + width, y), (x + width, y + corner_length), color, line_thickness)
 
-    # Bottom-left corner
+    # Bottom-left corner (at (x, y+height), arms extend RIGHT and UP INTO viewframe)
     color = get_corner_color(img, (x, y + height - corner_length), corner_length)
     cv2.line(
         img, (x, y + height), (x + corner_length, y + height), color, line_thickness
@@ -382,7 +155,7 @@ def draw_transparent_corner_brackets(
         img, (x, y + height), (x, y + height - corner_length), color, line_thickness
     )
 
-    # Bottom-right corner
+    # Bottom-right corner (at (x+width, y+height), arms extend LEFT and UP INTO viewframe)
     color = get_corner_color(
         img, (x + width - corner_length, y + height - corner_length), corner_length
     )
@@ -405,7 +178,14 @@ def draw_transparent_corner_brackets(
 def draw_alpha_blend_corner_brackets(
     img, x, y, width, height, corner_length, line_thickness, alpha=0.7
 ):
-    """Draw corner brackets with alpha blending (subtle overlay)."""
+    """Draw corner brackets AT viewframe corners with alpha blending (subtle overlay).
+
+    Bracket positions (AT viewframe corners, arms extending INWARD toward center):
+    - Top-Left: corner at (x, y), arms extend to (x+corner_length, y) and (x, y+corner_length)
+    - Top-Right: corner at (x+width, y), arms extend to (x+width-corner_length, y) and (x+width, y+corner_length)
+    - Bottom-Left: corner at (x, y+height), arms extend to (x+corner_length, y+height) and (x, y+height-corner_length)
+    - Bottom-Right: corner at (x+width, y+height), arms extend to (x+width-corner_length, y+height) and (x+width, y+height-corner_length)
+    """
     overlay = img.copy()
 
     color = get_corner_color(img, (x, y), corner_length)
@@ -497,7 +277,7 @@ def draw_viewframe(
     height: int,
     method: str = "distinctive",
     corner_length_pct: float = 0.15,
-    line_thickness: int = 2,
+    line_thickness: Optional[int] = None,
     alpha: float = 0.7,
 ) -> np.ndarray:
     """Draw viewframe overlay on image (ALWAYS draws, regardless of image size).
@@ -508,13 +288,17 @@ def draw_viewframe(
         width, height: Viewframe dimensions
         method: 'distinctive' (254/1 pixels) or 'alpha' (blended)
         corner_length_pct: Length of bracket arms as % of min_dim
-        line_thickness: Line thickness in pixels
+        line_thickness: Line thickness in pixels (None = auto: 2 for <150px, 3 for >=150px)
         alpha: Opacity for alpha blending method
 
     Returns:
         Image with viewframe drawn
     """
     min_dim = min(img.shape[0], img.shape[1])
+    # Auto-calculate line_thickness based on image size if not specified
+    # cv2.line draws thicker due to antialiasing: thickness=1 → 1px, thickness=2 → 3px
+    if line_thickness is None:
+        line_thickness = 1 if min_dim <= 150 else 2
     corner_length = int(min_dim * corner_length_pct)
 
     draw_corner_brackets(
@@ -537,12 +321,18 @@ def get_default_viewframe_coords(
     """Get default viewframe coordinates using specified margin percentage.
 
     Always applies the specified margin regardless of image size.
+    Ensures odd side length for symmetric alignment with odd-sized images.
     """
     h, w = img_shape[:2]
     min_dim = min(h, w)
     m = int(min_dim * margin_pct)
     x = y = m
     width = height = min_dim - 2 * m
+
+    # Ensure odd side length
+    if width % 2 == 0:
+        width += 1
+        height += 1
 
     return {
         "x": x,

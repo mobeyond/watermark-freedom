@@ -79,6 +79,31 @@
             display: none;
             background-color: #1e1e1e;
             word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        #watermarkResult {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            display: none;
+            background-color: #1e1e1e;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        #watermarkResult p, #result p {
+            margin: 0;
+            padding: 5px 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        #watermarkResult code, #result code {
+            display: inline-block;
+            max-width: 100%;
+            word-break: break-all;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+            line-height: 1.5;
         }
         h1 {
             font-size: 2.5rem;
@@ -101,10 +126,6 @@
             border: 1px solid #555;
             border-radius: 4px;
             box-sizing: border-box;
-        }
-    #result p {
-            margin: 0;
-            padding: 5px 0;
         }
         #coordinateSystem {
             margin-bottom: 15px;
@@ -158,25 +179,37 @@
                 
                 <div class="form-group">
                     <label for="message">Watermark Message (Payload):</label>
-                    <input type="text" id="message" name="message" value="ABC" maxlength="3" pattern="[A-Z4679#]*" oninput="this.value = this.value.toUpperCase()" style="text-transform: uppercase;" required>
+                    <input type="text" id="message" name="message" value="ABC" maxlength="3" pattern="[A-Z4679#.]*" oninput="this.value = this.value.toUpperCase()" style="text-transform: uppercase;" required>
                     <p class="help-text">
-                        Up to 3 characters. Allowed: <strong>A-Z, 4, 6, 7, 9, #</strong>
+                        Up to 3 characters (ROCO encoding). Allowed: <strong>A-Z, 4, 6, 7, 9, #, .</strong>
+                    </p>
+                </div>
+
+                <div class="form-group">
+                    <label>Encoding:</label>
+                    <select id="encoding" name="encoding" onchange="toggleEncoding()">
+                        <option value="roco">ROCO (3-char, robust)</option>
+                        <option value="roco32">ROCO32 (4-char, advanced)</option>
+                    </select>
+                    <p class="help-text" style="font-size: 0.9em; color: #888;">
+                        <strong>ROCO:</strong> 3 characters with bit-level repetition (more robust). <strong>ROCO32:</strong> 4 characters, higher capacity but less robust.
                     </p>
                 </div>
                 
                 <div class="form-group">
                     <label>Backend:</label>
                     <select id="backend" name="backend" onchange="toggleBackend()">
-                        <option value="videoseal">VideoSeal (256-bit, full image)</option>
+                        <option value="videoseal">VideoSeal (ROCO encoding)</option>
+                        <option value="custom">Custom Model (ROCO encoding)</option>
                         <option value="wam">WAM (32-bit, localized)</option>
                     </select>
                 </div>
                 
                 <div class="form-group">
-                    <label>Watermark Method:</label>
+                    <label>Margin Setup:</label>
                     <select id="watermarkMethod" onchange="toggleWatermarkMethod()">
                         <option value="region">Region-based</option>
-                        <option value="corners">Frame Corners</option>
+                        <option value="corners">Default 10%</option>
                     </select>
                 </div>
                 
@@ -191,42 +224,15 @@
                     
                     <div id="percentInputs" class="form-group">
                         <div>
-                            <label>X Position (0-1)</label>
-                            <input type="number" name="x_percent" id="x_percent" value="0.15" step="0.05" min="0" max="0.5" oninput="syncXY(this, 'percent')">
-                        </div>
-                        <div>
-                            <label>Y Position (0-1)</label>
-                            <input type="number" name="y_percent" id="y_percent" value="0.15" step="0.05" min="0" max="0.5" oninput="syncXY(this, 'percent')">
-                        </div>
-                        <div>
-                            <label><input type="checkbox" id="syncXY" checked onchange="toggleSyncXY()"> Sync X,Y</label>
-                        </div>
-                        <div>
-                            <label>Width (0-1) - Auto</label>
-                            <input type="number" name="width_percent" id="width_percent" value="0.7" step="0.05" min="0" max="1" readonly disabled style="background: #f0f0f0;">
-                        </div>
-                        <div>
-                            <label>Height (0-1) - Auto</label>
-                            <input type="number" name="height_percent" id="height_percent" value="0.7" step="0.05" min="0" max="1" readonly disabled style="background: #f0f0f0;">
+                            <label>Margin Position (0-1)</label>
+                            <input type="number" id="margin_percent" value="0.10" step="0.05" min="0" max="0.5">
                         </div>
                     </div>
                     
                     <div id="pixelInputs" class="form-group" style="display: none;">
                         <div>
-                            <label>X Position (pixels)</label>
-                            <input type="number" name="x_pixels" id="x_pixels" value="0" min="0" onchange="updatePixelSize()">
-                        </div>
-                        <div>
-                            <label>Y Position (pixels)</label>
-                            <input type="number" name="y_pixels" id="y_pixels" value="0" min="0" onchange="updatePixelSize()">
-                        </div>
-                        <div>
-                            <label>Width (pixels) - Auto</label>
-                            <input type="number" name="width_pixels" id="width_pixels" value="0" min="0" readonly disabled style="background: #f0f0f0;">
-                        </div>
-                        <div>
-                            <label>Height (pixels) - Auto</label>
-                            <input type="number" name="height_pixels" id="height_pixels" value="0" min="0" readonly disabled style="background: #f0f0f0;">
+                            <label>Margin Position (pixels)</label>
+                            <input type="number" id="margin_pixels" value="0" min="0">
                         </div>
                     </div>
                 </div>
@@ -239,42 +245,20 @@
             </form>
             <div id="watermarkResult" style="display: none; margin-top: 20px;">
                 <h3>Watermarking Complete</h3>
-                <p><strong>Binary Message:</strong> <code id="binaryMessage"></code></p>
+                <p><strong>Binary Message (32 bits):</strong></p>
+                <pre id="binaryMessage" style="background: #000; padding: 10px; border-radius: 4px; margin: 0; overflow-wrap: break-word; word-break: break-all; white-space: pre-wrap; font-family: monospace; color: #0f0; font-size: 11px; line-height: 1.4;"></pre>
                 <p>Your download will start automatically.</p>
             </div>
-        </div>
-        
-        <div class="section">
-            <h2>Verify Watermark</h2>
-            <form id="verifyForm" enctype="multipart/form-data">
-                <div class="form-group">
-                    <label>Backend:</label>
-                    <select id="verifyBackend" name="backend">
-                        <option value="videoseal">VideoSeal (256-bit, ROCO/ASCII)</option>
-                        <option value="wam">WAM (32-bit, ROCO)</option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="watermarked">Watermarked Image:</label>
-                    <input type="file" id="watermarked" name="watermarked" accept="image/*" required>
-                </div>
-                
-                <button type="submit">Verify Watermark</button>
-            </form>
-            
-            <div id="result"></div>
         </div>
     </div>
 
     <script>
-        // Global flag to prevent recursion
-        let _isSyncing = false;
-        
         // Auto-calculate Width/Height from X,Y (centered square)
         function updatePercentSize() {
-            const x = parseFloat(document.getElementById('x_percent').value) || 0;
-            const y = parseFloat(document.getElementById('y_percent').value) || 0;
+            const xEl = document.getElementById('x_percent');
+            const yEl = document.getElementById('y_percent');
+            const x = parseFloat(xEl.value) || 0;
+            const y = parseFloat(yEl.value) || 0;
             // Use median of X and Y
             const median = (x + y) / 2;
             // Calculate size for centered square: 1 - 2*median
@@ -282,10 +266,12 @@
             document.getElementById('width_percent').value = size.toFixed(2);
             document.getElementById('height_percent').value = size.toFixed(2);
         }
-        
+
         function updatePixelSize() {
-            const x = parseInt(document.getElementById('x_pixels').value) || 0;
-            const y = parseInt(document.getElementById('y_pixels').value) || 0;
+            const xEl = document.getElementById('x_pixels');
+            const yEl = document.getElementById('y_pixels');
+            const x = parseInt(xEl.value) || 0;
+            const y = parseInt(yEl.value) || 0;
             // Use median of X and Y
             const median = Math.round((x + y) / 2);
             // Assume image is 256x256 for now (will be updated by server)
@@ -295,57 +281,66 @@
             document.getElementById('width_pixels').value = size;
             document.getElementById('height_pixels').value = size;
         }
-        
+
         // Sync X and Y values when sync checkbox is checked
-        function syncXY(input, type) {
-            // Prevent recursion
-            if (_isSyncing) return;
-            
-            const syncEnabled = document.getElementById('syncXY') ? document.getElementById('syncXY').checked : false;
-            if (!syncEnabled) {
-                // Still update width/height even if sync is off
-                if (type === 'percent') {
-                    updatePercentSize();
-                } else {
-                    updatePixelSize();
-                }
-                return;
-            }
-            
-            _isSyncing = true;
-            
-            const value = parseFloat(input.value) || 0;
-            if (input.id === 'x_percent') {
-                document.getElementById('y_percent').value = value.toFixed(2);
-                updatePercentSize();
-            } else if (input.id === 'y_percent') {
-                document.getElementById('x_percent').value = value.toFixed(2);
-                updatePercentSize();
-            } else if (input.id === 'x_pixels') {
-                document.getElementById('y_pixels').value = Math.round(value);
-                updatePixelSize();
-            } else if (input.id === 'y_pixels') {
-                document.getElementById('x_pixels').value = Math.round(value);
-                updatePixelSize();
-            }
-            
-            _isSyncing = false;
-        }
-        
-        function toggleSyncXY() {
-            const syncEnabled = document.getElementById('syncXY') ? document.getElementById('syncXY').checked : false;
-            const coordSystem = document.getElementById('coordinateSystem') ? document.getElementById('coordinateSystem').value : 'percent';
-            
+        function handleSyncXY(input, type) {
+            const syncCheckbox = document.getElementById('syncXY_checkbox');
+            const syncEnabled = syncCheckbox ? syncCheckbox.checked : false;
+
+            const xEl = document.getElementById(type === 'percent' ? 'x_percent' : 'x_pixels');
+            const yEl = document.getElementById(type === 'percent' ? 'y_percent' : 'y_pixels');
+            const widthEl = document.getElementById(type === 'percent' ? 'width_percent' : 'width_pixels');
+            const heightEl = document.getElementById(type === 'percent' ? 'height_percent' : 'height_pixels');
+
+            const x = parseFloat(xEl.value) || 0;
+            const y = parseFloat(yEl.value) || 0;
+
             if (syncEnabled) {
-                if (coordSystem === 'percent') {
-                    const xVal = document.getElementById('x_percent').value;
-                    document.getElementById('y_percent').value = xVal;
-                    updatePercentSize();
-                } else {
-                    const xVal = document.getElementById('x_pixels').value;
-                    document.getElementById('y_pixels').value = xVal;
-                    updatePixelSize();
-                }
+                // When synced, X = Y, so width = height = 1 - 2*X (or 256 - 2*X for pixels)
+                const pos = input.id.includes('x') ? x : y;
+                const otherEl = input.id.includes('x') ? yEl : xEl;
+                otherEl.value = type === 'percent' ? pos.toFixed(2) : Math.round(pos);
+
+                const size = type === 'percent'
+                    ? Math.max(0, 1 - 2 * pos)
+                    : Math.max(0, 256 - 2 * Math.round(pos));
+
+                widthEl.value = type === 'percent' ? size.toFixed(2) : size;
+                heightEl.value = type === 'percent' ? size.toFixed(2) : size;
+            } else {
+                // Not synced - calculate width/height based on both X and Y
+                const median = (x + y) / 2;
+                const size = type === 'percent'
+                    ? Math.max(0, 1 - 2 * median)
+                    : Math.max(0, 256 - 2 * median);
+
+                widthEl.value = type === 'percent' ? size.toFixed(2) : size;
+                heightEl.value = type === 'percent' ? size.toFixed(2) : size;
+            }
+        }
+
+        function toggleSyncXYCheckbox() {
+            const syncCheckbox = document.getElementById('syncXY_checkbox');
+            const syncEnabled = syncCheckbox ? syncCheckbox.checked : false;
+            const coordSystem = document.getElementById('coordinateSystem');
+            const system = coordSystem ? coordSystem.value : 'percent';
+
+            if (syncEnabled) {
+                // Sync Y to X
+                const xEl = document.getElementById(system === 'percent' ? 'x_percent' : 'x_pixels');
+                const yEl = document.getElementById(system === 'percent' ? 'y_percent' : 'y_pixels');
+                const xVal = parseFloat(xEl.value) || 0;
+                yEl.value = system === 'percent' ? xVal.toFixed(2) : Math.round(xVal);
+
+                // Recalculate width/height with synced values
+                const size = system === 'percent'
+                    ? Math.max(0, 1 - 2 * xVal)
+                    : Math.max(0, 256 - 2 * Math.round(xVal));
+
+                const widthEl = document.getElementById(system === 'percent' ? 'width_percent' : 'width_pixels');
+                const heightEl = document.getElementById(system === 'percent' ? 'height_percent' : 'height_pixels');
+                widthEl.value = system === 'percent' ? size.toFixed(2) : size;
+                heightEl.value = system === 'percent' ? size.toFixed(2) : size;
             }
         }
         
@@ -394,46 +389,90 @@
             const backend = document.getElementById('backend').value;
             const messageInput = document.getElementById('message');
             const helpText = document.querySelector('.help-text');
-            
+            const encodingSelect = document.getElementById('encoding');
+
             if (backend === 'videoseal') {
-                messageInput.maxLength = 32;
-                messageInput.removeAttribute('pattern');
-                messageInput.style.textTransform = 'none';
-                helpText.innerHTML = 'Up to 32 characters. Any ASCII text allowed.';
-            } else {
+                // VideoSeal supports both ROCO (3-char) and ROCO32 (4-char)
+                // Default to ROCO (3-char)
+                encodingSelect.style.display = 'inline-block';
+                encodingSelect.value = 'roco';
+                updateMessageLimits();
+                helpText.innerHTML = 'Up to 3 characters (ROCO) or 4 characters (ROCO32). Allowed: <strong>A-Z, 4, 6, 7, 9, #, .</strong>';
+            } else if (backend === 'custom') {
+                // Custom model only supports 3-char ROCO
+                encodingSelect.style.display = 'none';
                 messageInput.maxLength = 3;
-                messageInput.pattern = '[A-Z4679#]*';
+                messageInput.pattern = '[A-Z4679#.]*';
                 messageInput.style.textTransform = 'uppercase';
-                messageInput.value = messageInput.value.substring(0, 3);
-                helpText.innerHTML = 'Up to 3 characters. Allowed: <strong>A-Z, 4, 6, 7, 9, #</strong>';
+                messageInput.value = messageInput.value.substring(0, 3).toUpperCase();
+                helpText.innerHTML = 'Up to 3 characters for Custom Model. Allowed: <strong>A-Z, 4, 6, 7, 9, #, .</strong>';
+            } else {
+                // WAM only supports 3-char ROCO
+                encodingSelect.style.display = 'none';
+                messageInput.maxLength = 3;
+                messageInput.pattern = '[A-Z4679#.]*';
+                messageInput.style.textTransform = 'uppercase';
+                messageInput.value = messageInput.value.substring(0, 3).toUpperCase();
+                helpText.innerHTML = 'Up to 3 characters for WAM. Allowed: <strong>A-Z, 4, 6, 7, 9, #, .</strong>';
+            }
+        }
+
+        function toggleEncoding() {
+            updateMessageLimits();
+        }
+
+        function updateMessageLimits() {
+            const backend = document.getElementById('backend').value;
+            const encoding = document.getElementById('encoding').value;
+            const messageInput = document.getElementById('message');
+
+            if (backend === 'videoseal') {
+                if (encoding === 'roco32') {
+                    messageInput.maxLength = 4;
+                    messageInput.value = messageInput.value.substring(0, 4).toUpperCase();
+                } else {
+                    messageInput.maxLength = 3;
+                    messageInput.value = messageInput.value.substring(0, 3).toUpperCase();
+                }
+                messageInput.pattern = '[A-Z4679#.]*';
+                messageInput.style.textTransform = 'uppercase';
+            } else {
+                // Custom model and WAM both support 3-char ROCO
+                messageInput.maxLength = 3;
+                messageInput.value = messageInput.value.substring(0, 3).toUpperCase();
             }
         }
         
         document.getElementById('watermarkForm').onsubmit = async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
-            
+
             const backend = document.getElementById('backend').value;
             formData.append('backend', backend);
-            
+
+            // Add encoding for VideoSeal and Custom model
+            if (backend === 'videoseal') {
+                const encoding = document.getElementById('encoding').value;
+                formData.append('encoding', encoding);
+            } else if (backend === 'custom') {
+                formData.append('encoding', 'roco');  // Custom model uses ROCO encoding
+            }
+
             const useCorners = document.getElementById('watermarkMethod').value === 'corners';
             formData.append('use_frame_corners', useCorners ? 'true' : 'false');
             
             const usePixels = document.getElementById('coordinateSystem').value === 'pixels';
             formData.append('use_pixels', usePixels ? 'true' : 'false');
             
-            // Append width/height from disabled fields (not submitted automatically)
+            // For region-based mode, read margin values from the form
+            // (width/height are calculated automatically on the backend)
             if (!useCorners) {
                 if (usePixels) {
-                    formData.append('width_pixels', document.getElementById('width_pixels').value);
-                    formData.append('height_pixels', document.getElementById('height_pixels').value);
-                    formData.append('x_pixels', document.getElementById('x_pixels').value);
-                    formData.append('y_pixels', document.getElementById('y_pixels').value);
+                    const marginPixels = document.getElementById('margin_pixels').value;
+                    formData.append('margin_pixels', marginPixels);
                 } else {
-                    formData.append('width_percent', document.getElementById('width_percent').value);
-                    formData.append('height_percent', document.getElementById('height_percent').value);
-                    formData.append('x_percent', document.getElementById('x_percent').value);
-                    formData.append('y_percent', document.getElementById('y_percent').value);
+                    const marginPercent = document.getElementById('margin_percent').value;
+                    formData.append('margin_percent', marginPercent);
                 }
             }
             
@@ -476,86 +515,6 @@
                 }
             } catch (error) {
                 alert('Error: ' + error.message);
-            }
-        };
-
-        document.getElementById('verifyForm').onsubmit = async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            
-            // Use verify-specific backend selector
-            const backend = document.getElementById('verifyBackend').value;
-            formData.append('backend', backend);
-            
-            // Read all coordinate and method settings from the form and append them
-            // to ensure the backend gets all required data for verification.
-            const watermarkMethod = document.getElementById('watermarkMethod').value;
-            const useCorners = watermarkMethod === 'corners';
-            formData.append('use_frame_corners', useCorners ? 'true' : 'false');
-
-            if (!useCorners) {
-                const coordSystem = document.getElementById('coordinateSystem').value;
-                const usePixels = coordSystem === 'pixels';
-                formData.append('use_pixels', usePixels ? 'true' : 'false');
-
-                if (usePixels) {
-                    formData.append('x_pixels', document.getElementById('x_pixels').value);
-                    formData.append('y_pixels', document.getElementById('y_pixels').value);
-                    formData.append('width_pixels', document.getElementById('width_pixels').value);
-                    formData.append('height_pixels', document.getElementById('height_pixels').value);
-                } else {
-                    formData.append('x_percent', document.getElementById('x_percent').value);
-                    formData.append('y_percent', document.getElementById('y_percent').value);
-                    formData.append('width_percent', document.getElementById('width_percent').value);
-                    formData.append('height_percent', document.getElementById('height_percent').value);
-                }
-            }
-
-            const resultDiv = document.getElementById('result');
-            resultDiv.style.display = 'block';
-            resultDiv.innerHTML = '<p>Verifying...</p>';
-
-            try {
-                const response = await fetch('/verify', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    let viewframeHtml = '';
-                    if (result.viewframe) {
-                        const vf = result.viewframe;
-                        const areaRatio = (vf.width_percent * vf.height_percent * 100).toFixed(1);
-                        viewframeHtml = `
-                            <h4>Detected Viewframe:</h4>
-                            <p><strong>Position:</strong> (${vf.x}, ${vf.y}) pixels</p>
-                            <p><strong>Size:</strong> ${vf.width} x ${vf.height} pixels</p>
-                            <p><strong>Position (%):</strong> (${(vf.x_percent * 100).toFixed(1)}%, ${(vf.y_percent * 100).toFixed(1)}%)</p>
-                            <p><strong>Size (%):</strong> ${(vf.width_percent * 100).toFixed(1)}% x ${(vf.height_percent * 100).toFixed(1)}%</p>
-                            <p><strong>Area Ratio:</strong> ${areaRatio}% of image</p>
-                        `;
-                    }
-                    
-                    resultDiv.innerHTML = `
-                        <h3>Verification Results:</h3>
-                        ${viewframeHtml}
-                        <p><strong>File:</strong> ${result.filename}</p>
-                        <p><strong>Decoded Message:</strong> ${result.readable_message}</p>
-                        <p><strong>Bit Error Rate:</strong> ${result.bit_error_rate_percent}</p>
-                        <p><strong>Corrected Bitflips:</strong> ${result.corrected_bitflips}</p>
-                        <p><strong>ECC Valid:</strong> ${result.is_valid_codeword}</p>
-                        <p><strong>Raw Binary Message:</strong> ${result.raw_binary_message}</p>
-                    `;
-                    if (result.bit_accuracy_vs_original) {
-                        resultDiv.innerHTML += `<p><strong>Bit Accuracy (vs. Original):</strong> ${result.bit_accuracy_vs_original}</p>`;
-                    }
-                } else {
-                    const error = await response.json();
-                    resultDiv.innerHTML = `<p style="color: red;">Error: ${error.error}</p>`;
-                }
-            } catch (error) {
-                resultDiv.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
             }
         };
     </script>
